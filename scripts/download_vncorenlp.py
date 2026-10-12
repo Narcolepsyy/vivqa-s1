@@ -6,8 +6,8 @@ import shutil
 def download():
     url = "https://github.com/vncorenlp/VnCoreNLP/archive/master.zip"
     zip_path = "vncorenlp.zip"
-    target_dir = "analysis/vncorenlp"
-    temp_dir = "analysis/vncorenlp_temp"
+    target_dir = "data_utils/vncorenlp"
+    temp_dir = "data_utils/vncorenlp_temp"
     
     # Download
     print("Downloading VnCoreNLP...")

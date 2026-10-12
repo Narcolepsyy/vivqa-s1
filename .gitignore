@@ -6,11 +6,13 @@ __pycache__/
 
 # Data, large caches, and environments
 .vector_cache/
-features/
-saved_models/
-images/
-data/
-datasets/
+/features/
+/saved_models/
+/images/
+/data/
+/datasets/
+/output/
+data_utils/vncorenlp/
 hf_models/
 hf_vevn/
 LLMS/
@@ -18,8 +20,7 @@ examine*
 *_test/
 .env*
 
-# Run outputs and temporary logs
-output/viso/
+# Run logs
 *.log
 
 # Checkpoints / weights
