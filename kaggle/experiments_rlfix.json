@@ -1,0 +1,188 @@
+{
+ "version": 3,
+ "s1_sha256": {
+  "train.jsonl": "25884e1e9a68dace3bd1fafdca6204dd3cb181f812d678810b8852a8b00b41e2",
+  "calib.jsonl": "7ca2283393718bd77e95dbadcd5019af670ef3b9504202c8b080134437c8220b",
+  "dev.jsonl": "d627c9c7f1a42d8ae00c49a4bb2c143e3cb1ba5531aabfee33e426cef80c0f65",
+  "test.jsonl": "e01a5fde7a2bae0c3598820b03ec184a41888029e2d83b8028db9d2d93cfb765"
+ },
+ "kaggle_overrides": {
+  "MODEL.DEVICE": "cuda",
+  "DATASET.FEATURE_DATASET.WORKERS": 2,
+  "DATASET.FEATURE_DATASET.BATCH_SIZE": 64,
+  "DATASET.FEATURE_DATASET.FEATURE_FORMAT": "packed",
+  "TRAINING.RESUME": true
+ },
+ "dry_run_overrides": {
+  "MODEL.DEVICE": "cpu",
+  "DATASET.FEATURE_DATASET.LIMIT": 64,
+  "DATASET.FEATURE_DATASET.BATCH_SIZE": 16,
+  "DATASET.FEATURE_DATASET.WORKERS": 0,
+  "TRAINING.EPOCHS_SUP": 2,
+  "TRAINING.EPOCHS_RL": 2,
+  "TRAINING.PATIENCE": 0,
+  "TRAINING.WARMUP_STEPS": 2,
+  "TRAINING.RESUME": true
+ },
+ "preflight": {
+  "source": "local GTX 1650 Ti, 200 steps of A2 and A0 on the real v2 data + SigLIP 2 cache (kaggle/preflight_local_gtx1650ti.json)",
+  "seconds_per_epoch": {
+   "FlatS1": 233.0,
+   "ViSO": 234.4
+  },
+  "note": "upper bound for a Kaggle T4; est_minutes = worst case (25 epochs, or 5 RL epochs for A3 / A3c); the Kaggle preflight replaces these numbers",
+  "total_gpu_hours_worst_case": 16.57,
+  "total_gpu_hours_typical_60pct": 10.73
+ },
+ "note": "RL-FIX re-run: RL stage only from the A2 checkpoints of the main matrix (attach viso-matrix; the A2 runs are found by name in its viso_out). Cause of the original A3 collapse: scripts/viso_rl_gradcheck.py.",
+ "common_overrides": {
+  "TRAINING.LR_ENCODER": 5e-05,
+  "TRAINING.LR_HEADS": 0.0005,
+  "TRAINING.WARMUP_STEPS": 200,
+  "MODEL.FUSION_PRODUCT": true,
+  "TRAINING.VISION_PATH_AS_HEADS": true,
+  "TRAINING.TEXT_PROJ_AS_HEADS": true,
+  "MODEL.STRICT_TEXT_MASK": true,
+  "TRAINING.EPOCHS_SUP": 12,
+  "TRAINING.PATIENCE": 5
+ },
+ "jobs": [
+  {
+   "id": "A3fix_s0",
+   "method": "A3fix",
+   "base_config": "configs/viso_siglip2_tsig.yaml",
+   "seed": 0,
+   "overrides": {
+    "TRAINING.LR_ENCODER": 5e-06,
+    "TRAINING.LR_HEADS": 5e-05,
+    "TRAINING.WARMUP_STEPS": 50,
+    "MODEL.FUSION_PRODUCT": true,
+    "TRAINING.VISION_PATH_AS_HEADS": true,
+    "TRAINING.TEXT_PROJ_AS_HEADS": true,
+    "MODEL.STRICT_TEXT_MASK": true,
+    "TRAINING.EPOCHS_SUP": 12,
+    "TRAINING.PATIENCE": 5,
+    "LOSS.NAME": "rlcd",
+    "LOSS.STAGE": "rl",
+    "LOSS.PG_WEIGHT": 0.05,
+    "LOSS.NUM_SAMPLES": 16
+   },
+   "depends_on": [],
+   "stage1_from": "A2_s0",
+   "post": "calibrate",
+   "est_minutes": 19.5
+  },
+  {
+   "id": "A3fix_s1",
+   "method": "A3fix",
+   "base_config": "configs/viso_siglip2_tsig.yaml",
+   "seed": 1,
+   "overrides": {
+    "TRAINING.LR_ENCODER": 5e-06,
+    "TRAINING.LR_HEADS": 5e-05,
+    "TRAINING.WARMUP_STEPS": 50,
+    "MODEL.FUSION_PRODUCT": true,
+    "TRAINING.VISION_PATH_AS_HEADS": true,
+    "TRAINING.TEXT_PROJ_AS_HEADS": true,
+    "MODEL.STRICT_TEXT_MASK": true,
+    "TRAINING.EPOCHS_SUP": 12,
+    "TRAINING.PATIENCE": 5,
+    "LOSS.NAME": "rlcd",
+    "LOSS.STAGE": "rl",
+    "LOSS.PG_WEIGHT": 0.05,
+    "LOSS.NUM_SAMPLES": 16
+   },
+   "depends_on": [],
+   "stage1_from": "A2_s1",
+   "post": "calibrate",
+   "est_minutes": 19.5
+  },
+  {
+   "id": "A3fix_s2",
+   "method": "A3fix",
+   "base_config": "configs/viso_siglip2_tsig.yaml",
+   "seed": 2,
+   "overrides": {
+    "TRAINING.LR_ENCODER": 5e-06,
+    "TRAINING.LR_HEADS": 5e-05,
+    "TRAINING.WARMUP_STEPS": 50,
+    "MODEL.FUSION_PRODUCT": true,
+    "TRAINING.VISION_PATH_AS_HEADS": true,
+    "TRAINING.TEXT_PROJ_AS_HEADS": true,
+    "MODEL.STRICT_TEXT_MASK": true,
+    "TRAINING.EPOCHS_SUP": 12,
+    "TRAINING.PATIENCE": 5,
+    "LOSS.NAME": "rlcd",
+    "LOSS.STAGE": "rl",
+    "LOSS.PG_WEIGHT": 0.05,
+    "LOSS.NUM_SAMPLES": 16
+   },
+   "depends_on": [],
+   "stage1_from": "A2_s2",
+   "post": "calibrate",
+   "est_minutes": 19.5
+  },
+  {
+   "id": "A3fixS_s0",
+   "method": "A3fixS",
+   "base_config": "configs/viso_siglip2_tsig.yaml",
+   "seed": 0,
+   "overrides": {
+    "TRAINING.LR_ENCODER": 5e-06,
+    "TRAINING.LR_HEADS": 5e-05,
+    "TRAINING.WARMUP_STEPS": 50,
+    "MODEL.FUSION_PRODUCT": true,
+    "TRAINING.VISION_PATH_AS_HEADS": true,
+    "TRAINING.TEXT_PROJ_AS_HEADS": true,
+    "MODEL.STRICT_TEXT_MASK": true,
+    "TRAINING.EPOCHS_SUP": 12,
+    "TRAINING.PATIENCE": 5,
+    "LOSS.NAME": "rlcd",
+    "LOSS.STAGE": "rl",
+    "LOSS.PG_WEIGHT": 0.2,
+    "LOSS.NUM_SAMPLES": 16,
+    "LOSS.PG_SIGMA_SCALE": true
+   },
+   "depends_on": [],
+   "stage1_from": "A2_s0",
+   "post": "calibrate",
+   "est_minutes": 19.5
+  }
+ ],
+ "methods": {
+  "A2": {
+   "family": "A2",
+   "variant": "uncal",
+   "description": "ViSO typed heads, soft CE"
+  },
+  "A3fix": {
+   "family": "A3fix",
+   "variant": "uncal",
+   "description": "A2 + RLCD stage, fixed: PG weight 0.05, K = 16, RL LRs x 0.1, warmup 50"
+  },
+  "A4fix": {
+   "family": "A3fix",
+   "variant": "pertype",
+   "description": "A3fix + per-type temperature (+ escalation head)"
+  },
+  "A3fixS": {
+   "family": "A3fixS",
+   "variant": "uncal",
+   "description": "A3fix with the PG term scaled by sigma (LOSS.PG_SIGMA_SCALE), PG weight 0.2 (1 seed)"
+  }
+ },
+ "comparisons": [
+  [
+   "A3fix",
+   "A2"
+  ],
+  [
+   "A4fix",
+   "A3fix"
+  ],
+  [
+   "A3fixS",
+   "A2"
+  ]
+ ]
+}

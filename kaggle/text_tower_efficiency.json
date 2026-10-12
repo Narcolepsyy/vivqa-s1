@@ -1,0 +1,47 @@
+{
+ "siglip2_text_tower": {
+  "model": "google/siglip2-base-patch16-256",
+  "revision": "3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab",
+  "params_total": 282303744,
+  "token_embedding_table_params": 196608000,
+  "params_without_embedding_table": 85695744,
+  "input": "1 x 64 tokens (padded to 64, as trained and as bamibert_extract.py runs it)",
+  "flops_batch1": 10872815616,
+  "cpu_latency_ms_1_threads": {
+   "median": 149.31,
+   "p95": 176.32
+  },
+  "cpu_latency_ms_4_threads": {
+   "median": 58.1,
+   "p95": 78.25
+  },
+  "flops_batch1_20_tokens_unpadded": 3398565888,
+  "frozen": true,
+  "once_per_question": true
+ },
+ "bamibert": {
+  "model": "Qualcomm-AI-Research/BamiBERT",
+  "revision": "57bc1340debbe4e348ec549047a763caebe4a977",
+  "params_total": 102360576,
+  "token_embedding_table_params": 15729408,
+  "params_without_embedding_table": 86631168,
+  "input": "1 x 20 tokens (unpadded)",
+  "flops_batch1": 3397386240,
+  "cpu_latency_ms_1_threads": {
+   "median": 66.49,
+   "p95": 77.15
+  },
+  "cpu_latency_ms_4_threads": {
+   "median": 35.43,
+   "p95": 45.84
+  },
+  "frozen": true,
+  "once_per_question": true
+ },
+ "machine": {
+  "cpu": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+  "torch": "2.14.1+cu130",
+  "python": "3.12.14",
+  "note": "latency measured on this local CPU (fp32, batch 1); same machine class as the vision-tower latency in vision_tower_efficiency.json"
+ }
+}

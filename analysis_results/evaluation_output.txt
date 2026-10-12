@@ -1,0 +1,47 @@
+﻿Loading ground truth...
+Loaded 5004 ground truth annotations.
+
+Evaluating lavys_predictions.json...
+Loaded 4462 predictions.
+Common IDs: 4462
+Scores for lavys_predictions.json:
+  BLEU: [0.040076724112876286, 0.018653319118409416, 0.008160021033326255, 0.002583004229137388]
+  ROUGE: 0.1085
+  CIDEr: 0.2636
+  Accuracy: 0.0177
+  Precision: 0.0885
+  Recall: 0.1828
+  F1: 0.1041
+
+Evaluating lavys_predictions_1760187507.json...
+Loaded 4462 predictions.
+Common IDs: 4462
+Scores for lavys_predictions_1760187507.json:
+  BLEU: [0.0619319657231861, 0.02983700879175727, 0.01357941513305272, 0.00441107814131846]
+  ROUGE: 0.1125
+  CIDEr: 0.2723
+  Accuracy: 0.0182
+  Precision: 0.0913
+  Recall: 0.1902
+  F1: 0.1078
+
+Evaluating results_llava_zero_shot_2025-09-22_23-07-14.json...
+Loaded 4462 predictions.
+Common IDs: 4462
+Scores for results_llava_zero_shot_2025-09-22_23-07-14.json:
+  BLEU: [0.04553394666355855, 0.011969904922874914, 0.0037562256663779404, 2.745616677302903e-07]
+  ROUGE: 0.0988
+  CIDEr: 0.2205
+  Accuracy: 0.0672
+  Precision: 0.0907
+  Recall: 0.1310
+  F1: 0.0970
+
+==================================================
+FINAL SUMMARY
+==================================================
+File | Accuracy | F1 | Precision | Recall | CIDEr | BLEU | ROUGE
+----------------------------------------------------------------
+lavys_predictions.json | 0.0177 | 0.1041 | 0.0885 | 0.1828 | 0.2636 | 0.0026 | 0.1085
+lavys_predictions_1760187507.json | 0.0182 | 0.1078 | 0.0913 | 0.1902 | 0.2723 | 0.0044 | 0.1125
+results_llava_zero_shot_2025-09-22_23-07-14.json | 0.0672 | 0.0970 | 0.0907 | 0.1310 | 0.2205 | 0.0000 | 0.0988

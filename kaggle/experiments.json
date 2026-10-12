@@ -1,0 +1,328 @@
+{
+ "version": 1,
+ "note": "ViSO experiment matrix for Kaggle (Phase 2b). Hyper-parameters are the defaults of configs/viso_vivqav2.yaml. est_minutes is filled from the preflight when available.",
+ "s1_sha256": {
+  "train.jsonl": "31216ebae68a33e4f981b3213c9fa0f9a12154a45625fcc0eff4fb22d851b177",
+  "calib.jsonl": "207e83478a0b033ee0d06b614def56c2531195b838c26860c01870c312b85048",
+  "dev.jsonl": "243f8f575ae221ef48f2ee0cbfa5edd3d62ccdf4e6814705dcca8cbee20c371b",
+  "test.jsonl": "71dc0a07a815776b3fcc802ddbd1b75475e17a44c94af70c47a4cf681f5595b7"
+ },
+ "kaggle_overrides": {
+  "MODEL.DEVICE": "cuda",
+  "DATASET.FEATURE_DATASET.WORKERS": 2,
+  "DATASET.FEATURE_DATASET.BATCH_SIZE": 64,
+  "DATASET.FEATURE_DATASET.FEATURE_FORMAT": "packed",
+  "TRAINING.RESUME": true
+ },
+ "dry_run_overrides": {
+  "MODEL.DEVICE": "cpu",
+  "DATASET.FEATURE_DATASET.LIMIT": 64,
+  "DATASET.FEATURE_DATASET.BATCH_SIZE": 16,
+  "DATASET.FEATURE_DATASET.WORKERS": 0,
+  "TRAINING.EPOCHS_SUP": 2,
+  "TRAINING.EPOCHS_RL": 2,
+  "TRAINING.PATIENCE": 0,
+  "TRAINING.WARMUP_STEPS": 2,
+  "TRAINING.RESUME": true
+ },
+ "jobs": [
+  {
+   "id": "A2_s0",
+   "method": "A2",
+   "base_config": "configs/viso_vivqav2.yaml",
+   "seed": 0,
+   "overrides": {
+    "LOSS.NAME": "soft_ce"
+   },
+   "depends_on": [],
+   "stage1_from": null,
+   "post": "predict",
+   "est_minutes": null
+  },
+  {
+   "id": "A0_s0",
+   "method": "A0",
+   "base_config": "configs/viso_flat_vivqav2.yaml",
+   "seed": 0,
+   "overrides": {
+    "LOSS.NAME": "soft_ce"
+   },
+   "depends_on": [],
+   "stage1_from": null,
+   "post": "calibrate",
+   "est_minutes": null
+  },
+  {
+   "id": "A3_s0",
+   "method": "A3",
+   "base_config": "configs/viso_vivqav2.yaml",
+   "seed": 0,
+   "overrides": {
+    "LOSS.NAME": "rlcd",
+    "LOSS.STAGE": "rl",
+    "LOSS.PG_WEIGHT": 1.0
+   },
+   "depends_on": [
+    "A2_s0"
+   ],
+   "stage1_from": "A2_s0",
+   "post": "calibrate",
+   "est_minutes": null
+  },
+  {
+   "id": "A3c_s0",
+   "method": "A3c",
+   "base_config": "configs/viso_vivqav2.yaml",
+   "seed": 0,
+   "overrides": {
+    "LOSS.NAME": "rlcd",
+    "LOSS.STAGE": "rl",
+    "LOSS.PG_WEIGHT": 0.0
+   },
+   "depends_on": [
+    "A2_s0"
+   ],
+   "stage1_from": "A2_s0",
+   "post": "predict",
+   "est_minutes": null
+  },
+  {
+   "id": "A1_s0",
+   "method": "A1",
+   "base_config": "configs/viso_vivqav2.yaml",
+   "seed": 0,
+   "overrides": {
+    "LOSS.NAME": "hard_ce"
+   },
+   "depends_on": [],
+   "stage1_from": null,
+   "post": "predict",
+   "est_minutes": null
+  },
+  {
+   "id": "A5_s0",
+   "method": "A5",
+   "base_config": "configs/viso_vivqav2.yaml",
+   "seed": 0,
+   "overrides": {
+    "LOSS.NAME": "soft_ce",
+    "MODEL.ZERO_VISION": true
+   },
+   "depends_on": [],
+   "stage1_from": null,
+   "post": "predict",
+   "est_minutes": null
+  },
+  {
+   "id": "A6_s0",
+   "method": "A6",
+   "base_config": "configs/viso_vivqav2.yaml",
+   "seed": 0,
+   "overrides": {
+    "LOSS.NAME": "soft_ce",
+    "MODEL.SET_ATTENTION": false
+   },
+   "depends_on": [],
+   "stage1_from": null,
+   "post": "predict",
+   "est_minutes": null
+  },
+  {
+   "id": "A2_s1",
+   "method": "A2",
+   "base_config": "configs/viso_vivqav2.yaml",
+   "seed": 1,
+   "overrides": {
+    "LOSS.NAME": "soft_ce"
+   },
+   "depends_on": [],
+   "stage1_from": null,
+   "post": "predict",
+   "est_minutes": null
+  },
+  {
+   "id": "A0_s1",
+   "method": "A0",
+   "base_config": "configs/viso_flat_vivqav2.yaml",
+   "seed": 1,
+   "overrides": {
+    "LOSS.NAME": "soft_ce"
+   },
+   "depends_on": [],
+   "stage1_from": null,
+   "post": "calibrate",
+   "est_minutes": null
+  },
+  {
+   "id": "A3_s1",
+   "method": "A3",
+   "base_config": "configs/viso_vivqav2.yaml",
+   "seed": 1,
+   "overrides": {
+    "LOSS.NAME": "rlcd",
+    "LOSS.STAGE": "rl",
+    "LOSS.PG_WEIGHT": 1.0
+   },
+   "depends_on": [
+    "A2_s1"
+   ],
+   "stage1_from": "A2_s1",
+   "post": "calibrate",
+   "est_minutes": null
+  },
+  {
+   "id": "A3c_s1",
+   "method": "A3c",
+   "base_config": "configs/viso_vivqav2.yaml",
+   "seed": 1,
+   "overrides": {
+    "LOSS.NAME": "rlcd",
+    "LOSS.STAGE": "rl",
+    "LOSS.PG_WEIGHT": 0.0
+   },
+   "depends_on": [
+    "A2_s1"
+   ],
+   "stage1_from": "A2_s1",
+   "post": "predict",
+   "est_minutes": null
+  },
+  {
+   "id": "A2_s2",
+   "method": "A2",
+   "base_config": "configs/viso_vivqav2.yaml",
+   "seed": 2,
+   "overrides": {
+    "LOSS.NAME": "soft_ce"
+   },
+   "depends_on": [],
+   "stage1_from": null,
+   "post": "predict",
+   "est_minutes": null
+  },
+  {
+   "id": "A0_s2",
+   "method": "A0",
+   "base_config": "configs/viso_flat_vivqav2.yaml",
+   "seed": 2,
+   "overrides": {
+    "LOSS.NAME": "soft_ce"
+   },
+   "depends_on": [],
+   "stage1_from": null,
+   "post": "calibrate",
+   "est_minutes": null
+  },
+  {
+   "id": "A3_s2",
+   "method": "A3",
+   "base_config": "configs/viso_vivqav2.yaml",
+   "seed": 2,
+   "overrides": {
+    "LOSS.NAME": "rlcd",
+    "LOSS.STAGE": "rl",
+    "LOSS.PG_WEIGHT": 1.0
+   },
+   "depends_on": [
+    "A2_s2"
+   ],
+   "stage1_from": "A2_s2",
+   "post": "calibrate",
+   "est_minutes": null
+  },
+  {
+   "id": "A3c_s2",
+   "method": "A3c",
+   "base_config": "configs/viso_vivqav2.yaml",
+   "seed": 2,
+   "overrides": {
+    "LOSS.NAME": "rlcd",
+    "LOSS.STAGE": "rl",
+    "LOSS.PG_WEIGHT": 0.0
+   },
+   "depends_on": [
+    "A2_s2"
+   ],
+   "stage1_from": "A2_s2",
+   "post": "predict",
+   "est_minutes": null
+  }
+ ],
+ "methods": {
+  "A0": {
+   "family": "A0",
+   "variant": "uncal",
+   "description": "ViCompreVQA flat classifier (restricted at evaluation)"
+  },
+  "A0T": {
+   "family": "A0",
+   "variant": "pertype",
+   "description": "A0 + per-type temperature"
+  },
+  "A1": {
+   "family": "A1",
+   "variant": "uncal",
+   "description": "ViSO typed heads, hard CE"
+  },
+  "A2": {
+   "family": "A2",
+   "variant": "uncal",
+   "description": "ViSO typed heads, soft CE"
+  },
+  "A3": {
+   "family": "A3",
+   "variant": "uncal",
+   "description": "A2 + RLCD stage"
+  },
+  "A3c": {
+   "family": "A3c",
+   "variant": "uncal",
+   "description": "A2 + same extra epochs, soft CE only (RLCD control)"
+  },
+  "A4": {
+   "family": "A3",
+   "variant": "pertype",
+   "description": "A3 + per-type temperature (+ escalation head)"
+  },
+  "A5": {
+   "family": "A5",
+   "variant": "uncal",
+   "description": "ViSO, ZERO_VISION (question-only)"
+  },
+  "A6": {
+   "family": "A6",
+   "variant": "uncal",
+   "description": "ViSO, no set attention in the choice head"
+  }
+ },
+ "comparisons": [
+  [
+   "A3",
+   "A2"
+  ],
+  [
+   "A3",
+   "A3c"
+  ],
+  [
+   "A2",
+   "A0"
+  ],
+  [
+   "A4",
+   "A3"
+  ],
+  [
+   "A0T",
+   "A0"
+  ],
+  [
+   "A5",
+   "A2"
+  ],
+  [
+   "A6",
+   "A2"
+  ]
+ ]
+}

@@ -1,0 +1,148 @@
+# Variant of viso_siglip2.yaml with FROZEN BamiBERT question / candidate features (Phase 2c text side).
+# ViSO on ViVQA-S1 v2.0 with frozen SigLIP 2 B/16 256 px cached features (Phase 2c). VinVL is dropped. Vision = 65 cached tokens x 768 per image (pooled + 8x8 pooled grid, see scripts/siglip2_extract.py).
+# Every variant is a CLI override (`train_viso.py --config-file ... --opts KEY VALUE ...`), see docs/viso_README.md.
+TASK: TypedDecisionTask
+
+DATASET:
+  FEATURE_DATASET:
+    TYPE: S1FeatureDataset
+    BATCH_SIZE: 64
+    WORKERS: 0
+    FEATURE_CACHE: 0
+    FEATURE_FORMAT: packed         # npy (one dict per image) | packed (one fp16 array, see docs/viso_README.md)
+    PACKED_PATH: ~/data/siglip2_packed
+    TEXT_CACHE: ~/data/bamibert_cache   # frozen BamiBERT features of every question / candidate (scripts/bamibert_extract.py)
+    TEXT_CACHE_POOL: mean          # mean | cls: pooled vector of a candidate string
+    TEXT_CACHE_STANDARDIZE: True   # per-dimension z-score of the cached question states / candidate vectors (removes the large common component of BERT last-layer vectors)
+    USE_BOXES: True                # return the shared patch-cell boxes (boxes.npy of the cache) as region_boxes
+    LIMIT: 0                       # >0: use only the first LIMIT items of every split (tiny runs)
+    NOUL_TRAIN_FRACTION: 1.0       # < 1: keep this fraction of the REAL yes/no TRAIN items (seeded, stratified by label x question form; learning curve)
+    NOUL_SUBSET_SEED: 0
+    TEACHER_TRAIN: ''              # jsonl {id, p} of teacher distributions for the TRAIN split (knowledge distillation); '' = none
+    EXTRA_TRAIN: ''                # jsonl of extra TRAIN items (translated real VQA v2 questions, meta.extra_vqa); '' = none
+    FEATURE_PATH:
+      FEATURES: null                # unused with FEATURE_FORMAT packed (no VinVL files)
+  VOCAB:
+    TYPE: S1Vocab
+    TOKENIZER: null
+    MIN_FREQ: 1
+    BOS_TOKEN: <bos>
+    EOS_TOKEN: <eos>
+    PAD_TOKEN: <pad>
+    UNK_TOKEN: <unk>
+    S1_DIR: ../vivqa_s1_v2/data    # train/calib/dev/test.jsonl of ViVQA-S1 v2.0 (read-only)
+
+TRAINING:
+  SEED: 0
+  CHECKPOINT_PATH: saved_models
+  OUTPUT_PATH: output/viso
+  EPOCHS_SUP: 25                   # stage 1 (soft_ce / hard_ce), early stopping on dev NLL
+  PATIENCE: 5
+  EPOCHS_RL: 5                     # stage 2 (rlcd), only when LOSS.NAME == rlcd
+  LR_ENCODER: 0.0002
+  LR_HEADS: 0.001
+  WEIGHT_DECAY: 0.01
+  WARMUP_STEPS: 500
+  GRAD_CLIP: 1.0
+  VISION_PATH_AS_HEADS: False      # True: vision_embedding / vision_proj / vision_attr_reduce (+ box_proj, feature_norm, prod_v) use LR_HEADS
+  TEXT_PROJ_AS_HEADS: False        # True: the 768 -> 512 projection of cached BERT states uses LR_HEADS
+  ENCODER_AS_HEADS: False          # True: ONE learning rate (LR_HEADS) for every parameter (from-scratch models such as B-BUTD)
+  AMP: False                       # keep False (the -1e9 / -1e5 masks overflow in fp16)
+  RESUME: False                    # True: continue from last.pth / skip a finished run (DONE.json); the Kaggle runner sets it
+  DEADLINE_UNIX: 0.0               # >0: stop after an epoch (exit code 3, resumable) if the next epoch would pass this unix time
+  STOP_AFTER_EPOCHS: 0             # >0: simulated interruption after this many epochs of the session (tests)
+
+LOSS:
+  NAME: soft_ce                    # hard_ce | soft_ce | rlcd
+  STAGE: all                       # all | sup | rl  (rlcd: stage 1 soft_ce, then stage 2 rlcd from the best checkpoint)
+  TYPE_BALANCE: False
+  KD_WEIGHT: 0.0                   # a: loss = (1 - a) CE(human soft label) + a CE(teacher distribution) on items that have a teacher target (needs DATASET.FEATURE_DATASET.TEACHER_TRAIN)
+  TYPE_WEIGHTS: [1.0, 1.0, 1.0]    # per-type loss weights (noul, score, choice) applied to the per-item loss before the reduction; [1, 1, 1] = off
+  PG_WEIGHT: 1.0
+  PG_SIGMA_SCALE: False            # True: multiply the policy-gradient term by sigma (the PG gradient is ~ 1/sigma: this makes its scale independent of the annealed sigma)
+  NUM_SAMPLES: 4
+  SIGMA_START: 0.4
+  SIGMA_END: 0.1
+  SPHERICAL_WEIGHT: 0.75
+  RPS_WEIGHT: 1.0
+
+MODEL:
+  ARCHITECTURE: ViSO
+  NAME: viso_s1
+  DEVICE: cuda
+  D_MODEL: 512
+  CONSTITUENT_LAYERS: 3
+  STRICT_TEXT_MASK: True           # correct padding masks in the constituent module (the published code reads the additive mask as a bool and never applies masked_fill: False reproduces it); ON for every SigLIP 2 run
+  FUSION_PRODUCT: False            # True: + Hadamard term prod_q(text) * prod_v(vision) in the fusion
+  FUSION_DROPOUT: 0.0              # dropout on the fused vector h (regularisation variant)
+  ATTR_REDUCE_INIT_STD: 0.0        # > 0: N(0, std) init of the last layer of the attention-pooling MLPs (non-uniform pooling at the start); 0 = default init
+
+  ZERO_VISION: False               # True: question-only ablation (A5)
+  SET_ATTENTION: True              # False: choice head without set attention (A6)
+  SHARE_EMBEDDING: True
+  SET_LAYERS: 2
+  SET_HEADS: 8
+  SET_FF: 1024
+  SET_DROPOUT: 0.1
+  HEAD_DROPOUT: 0.1
+  VISION_EMBEDDING:
+    ARCHITECTURE: FeatureEmbedding
+    D_FEATURE: 768
+    D_MODEL: 512
+    DROPOUT: 0.1
+    USE_BOXES: True
+    FEATURE_NORM: False            # True: LayerNorm over the 768 raw feature dims before the projection
+  TEXT_EMBEDDING:
+    ARCHITECTURE: CachedBertEmbedding   # Linear(768 -> 512) over the cached BamiBERT token states (no LSTM, no from-scratch word embeddings)
+    D_MODEL: 512
+    D_EMBEDDING: 768
+    DROPOUT: 0.1
+    WORD_EMBEDDING: null
+    WORD_EMBEDDING_CACHE: null
+  SELF_ENCODER:
+    ARCHITECTURE: Encoder
+    D_MODEL: 512
+    LAYERS: 3
+    SELF_ATTENTION:
+      ARCHITECTURE: ScaledDotProductAttention
+      HEAD: 8
+      D_MODEL: 512
+      D_KEY: 64
+      D_VALUE: 64
+      D_FF: 2048
+      D_FEATURE: 768
+      USE_AOA: False
+      CAN_BE_STATEFUL: False
+      DROPOUT: .1
+  GUIDED_ENCODER:
+    ARCHITECTURE: GuidedAttentionEncoder
+    D_MODEL: 512
+    LAYERS: 3
+    SELF_ATTENTION:
+      ARCHITECTURE: ScaledDotProductAttention
+      HEAD: 8
+      D_MODEL: 512
+      D_KEY: 64
+      D_VALUE: 64
+      D_FF: 2048
+      D_FEATURE: 768
+      USE_AOA: False
+      CAN_BE_STATEFUL: False
+      DROPOUT: .1
+    GUIDED_ATTENTION:
+      ARCHITECTURE: ScaledDotProductAttention
+      HEAD: 8
+      D_MODEL: 512
+      D_KEY: 64
+      D_VALUE: 64
+      D_FF: 2048
+      D_FEATURE: 768
+      USE_AOA: False
+      CAN_BE_STATEFUL: False
+      DROPOUT: .1
+  VISION_ATTR_REDUCE:
+    D_MODEL: 512
+    DROPOUT: 0.1
+  TEXT_ATTR_REDUCE:
+    D_MODEL: 512
+    DROPOUT: 0.1

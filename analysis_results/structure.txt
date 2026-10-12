@@ -1,0 +1,20 @@
+--- Inspecting d:\My\University\NCKH\Code\ViVQAv2\data\vivqa_v2\vivqa_v2_test.json ---
+Type: dict, Keys: ['images', 'annotations']
+Key 'images' is list of length 5004
+Sample item from 'images': {'id': 26379, 'file_name': '398488.jpg'}
+Key 'annotations' is list of length 5004
+Sample item from 'annotations': {'id': 49723, 'image_id': 26379, 'question': 'Tại sao cậu bé đang đứng?', 'answers': 'nhìn'}
+
+--- Inspecting d:\My\University\NCKH\Code\ViVQAv2\saved_models\saaa_region_x152++_faster_rcnn_vivqav2\test_results.json ---
+Type: dict, Keys: ['results', 'BLEU', 'ROUGE', 'CIDEr', 'Accuracy', 'Precision', 'Recall', 'F1']
+Key 'results' is list of length 5338
+Sample item from 'results': {'id': [8117], 'filename': ['062387.jpg'], 'gens': {'0_0': '2'}, 'gts': {'0_0': '4'}}
+Key 'BLEU' is list of length 4
+Sample item from 'BLEU': 0.2801053393825053
+Key 'ROUGE' value type: <class 'float'>
+Key 'CIDEr' value type: <class 'float'>
+Key 'Accuracy' value type: <class 'float'>
+Key 'Precision' value type: <class 'float'>
+Key 'Recall' value type: <class 'float'>
+Key 'F1' value type: <class 'float'>
+

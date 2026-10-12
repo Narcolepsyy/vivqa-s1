@@ -1,0 +1,38 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Data, large caches, and environments
+.vector_cache/
+features/
+saved_models/
+images/
+data/
+datasets/
+hf_models/
+hf_vevn/
+LLMS/
+examine*
+*_test/
+.env*
+
+# Run outputs and temporary logs
+output/viso/
+*.log
+
+# Checkpoints / weights
+*.pt
+*.pth
+*.bin
+*.ckpt
+
+# Archives (allow specific project files like s1_images_sha256.tsv.gz)
+*.zip
+*.rar
+*.tar
+
+# OS / Editor artifacts
+.DS_Store
+*.swp

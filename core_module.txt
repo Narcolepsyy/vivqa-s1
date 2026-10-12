@@ -1,0 +1,106 @@
+class ScaledDotProductAttention(nn.Module):
+    def __init__(self, head: int, d_model: int, d_kv: int):
+        super(ScaledDotProductAttention, self).__init__()
+
+        self.d_model = d_model
+        self.d_q = d_kv
+        self.d_kv = d_kv
+        self.head = head
+
+        self.fc_q = nn.Linear(d_model, head * d_kv)
+        self.fc_k = nn.Linear(d_model, head * d_kv)
+        self.fc_v = nn.Linear(d_model, head * d_kv)
+
+    def forward(self, queries, keys, values, group_prob, attention_mask):
+        b_s, nq = queries.shape[:2]
+        nk = keys.shape[1]
+        q = self.fc_q(queries).view(b_s, nq, self.head, self.d_q).permute(0, 2, 1, 3)   # (b_s, h, nq, d_q)
+        k = self.fc_k(keys).view(b_s, nk, self.head, self.d_kv).permute(0, 2, 3, 1)     # (b_s, h, nk, d_kv)
+        v = self.fc_v(values).view(b_s, nk, self.head, self.d_kv).permute(0, 2, 1, 3)   # (b_s, h, nk, d_kv)
+
+        att = torch.matmul(q, k) / np.sqrt(self.d_kv)  # (b_s, h, nq, nk)
+        if attention_mask is not None:
+            attention_mask = attention_mask.unsqueeze(1).unsqueeze(1)
+            att.masked_fill(attention_mask == 0, -1e4)
+        att = torch.softmax(att, dim=-1)
+        att = att * group_prob
+        output = torch.matmul(att, v).permute(0, 2, 1, 3).reshape(b_s, -1, self.d_model)
+
+        return output
+
+class GroupAttention(nn.Module):
+    def __init__(self, head, d_model, dropout=0.8):
+        super(GroupAttention, self).__init__()
+        self.h = head
+        self.d_k = d_model // head
+        self.linear_key = nn.Linear(self.d_k, self.d_k)
+        self.linear_query = nn.Linear(self.d_k, self.d_k)
+        self.norm = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, context, eos_mask, prior):
+        bs, seq_len = context.size()[:2]
+
+        context = self.norm(context).view(bs, seq_len, self.h, self.d_k).transpose(1, 2)
+
+        a = torch.diag(torch.ones(seq_len - 1), 1).long().to(context.device)
+        b = torch.diag(torch.ones(seq_len), 0).long().to(context.device)
+        c = torch.diag(torch.ones(seq_len - 1), -1).long().to(context.device)
+
+        mask = torch.logical_and(eos_mask, (a+c))
+        
+        key = self.linear_key(context)
+        query = self.linear_query(context)
+        
+        scores = torch.matmul(query, key.transpose(-2, -1)) / self.d_k
+        
+        scores = scores.masked_fill(mask == 0, -1e4)
+        neibor_attn = F.softmax(scores, dim = -1)
+        neibor_attn = torch.sqrt(neibor_attn*neibor_attn.transpose(-2,-1) + 1e-4)
+        neibor_attn = prior + (1. - prior)*neibor_attn
+
+        tri_matrix = torch.triu(torch.ones(seq_len, seq_len), diagonal = 0).float().to(context.device)
+        tri_matrix = tri_matrix.unsqueeze(0).unsqueeze(0)
+        t = torch.log(neibor_attn + 1e-9).masked_fill(a == 0, 0).matmul(tri_matrix)
+        g_attn = tri_matrix.matmul(t).exp().masked_fill((tri_matrix.int() - b) == 0, 0)
+        g_attn = g_attn + g_attn.transpose(-2, -1) + neibor_attn.masked_fill(b == 0, 1e-4)
+        
+        return g_attn, neibor_attn
+
+
+
+class OCREncoderLayer(nn.Module):
+    "Encoder is made up of self-attn and feed forward (defined below)"
+    def __init__(self, head, d_model, d_kv, d_ff, dropout=0.1):
+        super().__init__()
+        self.group_attn = GroupAttention(head, d_model)
+        self.self_attn = ScaledDotProductAttention(head, d_model, d_kv)
+        self.feed_forward = PositionwiseFeedForward(d_model, d_ff)
+        self.sublayer = clones(SublayerConnection(d_model, dropout), 2)
+        self.size = d_model
+
+    def forward(self, x, mask, group_prob):
+        group_prob, break_prob = self.group_attn(x, mask, group_prob)
+        x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, group_prob, mask))
+        
+        return self.sublayer[1](x, self.feed_forward), group_prob, break_prob
+    
+class OCREncoder(nn.Module):
+    def __init__(self, head, d_model, d_kv, d_ff, word_embed):
+        super().__init__()
+        self.word_embed = word_embed
+        self.layers = clones(OCREncoderLayer(head, d_model, d_kv, d_ff), 3)
+        self.norm = nn.LayerNorm(d_model)
+
+    def forward(self, inputs, mask):
+        break_probs = []
+        x = self.word_embed(inputs)
+        group_prob = 0.
+        for layer in self.layers:
+            x, group_prob, break_prob = layer(x, mask,group_prob)
+            break_probs.append(break_prob)
+
+        x = self.norm(x)
+        break_probs = torch.stack(break_probs, dim=1)
+
+        return x, break_probs

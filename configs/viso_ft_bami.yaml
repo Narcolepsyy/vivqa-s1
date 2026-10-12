@@ -1,0 +1,168 @@
+# ViSO-FT: the ABL_bami / A2bami recipe (F2, TEXT_PROJ_AS_HEADS, strict mask, low LR, 12 epochs / patience 5, best-dev-NLL) with LIVE encoders instead of the frozen caches: the SigLIP 2 vision tower and BamiBERT
+# run on every batch and their top 4 blocks are fine-tuned (LR_FT). See models/viso/viso_ft.py; trained with scripts/train_viso_ft.py.
+# ViSO on ViVQA-S1 v2.0 with frozen SigLIP 2 B/16 256 px cached features (Phase 2c). VinVL is dropped. Vision = 65 cached tokens x 768 per image (pooled + 8x8 pooled grid, see scripts/siglip2_extract.py).
+# Every variant is a CLI override (`train_viso.py --config-file ... --opts KEY VALUE ...`), see docs/viso_README.md.
+TASK: TypedDecisionTask
+
+DATASET:
+  FEATURE_DATASET:
+    TYPE: S1LiveDataset
+    BATCH_SIZE: 64
+    WORKERS: 8                     # DataLoader workers (image uint8 memmap read + tokenisation); worker_init_fn gives every worker one math thread
+    EVAL_WORKERS: 4
+    PIN_MEMORY: True
+    FEATURE_CACHE: 0
+    FEATURE_FORMAT: npy            # no cached vision features are read (S1LiveDataset)
+    PACKED_PATH: ~/data/siglip2_packed
+    TEXT_CACHE: ''                 # no cached text features: BamiBERT runs live
+    TEXT_CACHE_POOL: mean          # mean | cls: pooled vector of a candidate string
+    TEXT_CACHE_STANDARDIZE: True   # per-dimension z-score of the cached question states / candidate vectors (removes the large common component of BERT last-layer vectors)
+    USE_BOXES: False               # the live module supplies the 65 patch-cell boxes (MODEL.VISION_EMBEDDING.USE_BOXES stays True)
+    LIMIT: 0                       # >0: use only the first LIMIT items of every split (tiny runs)
+    NOUL_TRAIN_FRACTION: 1.0       # < 1: keep this fraction of the REAL yes/no TRAIN items (seeded, stratified by label x question form; learning curve)
+    NOUL_SUBSET_SEED: 0
+    TEACHER_TRAIN: ''              # jsonl {id, p} of teacher distributions for the TRAIN split (knowledge distillation); '' = none
+    EXTRA_TRAIN: ''                # jsonl of extra TRAIN items (translated real VQA v2 questions, meta.extra_vqa); '' = none
+    FEATURE_PATH:
+      FEATURES: null
+    LIVE:
+      TEXT_MODEL: Qualcomm-AI-Research/BamiBERT
+      TEXT_REVISION: 57bc1340debbe4e348ec549047a763caebe4a977
+      IMAGE_CACHE_DIR: ~/data/viso_ft_cache   # uint8 image memmap (scripts/train_viso_ft.py builds it); absent = decode images on the fly (smoke tests)
+      IMAGE_ROOTS: [~/data/vivqa_images]      # searched recursively for the COCO / benchmark image files (utils/coco_images.ImageStore)
+      SHA_LIST: kaggle/s1_images_sha256.tsv    # every image read is verified against it
+      VERIFY: True
+  VOCAB:
+    TYPE: S1Vocab
+    TOKENIZER: null
+    MIN_FREQ: 1
+    BOS_TOKEN: <bos>
+    EOS_TOKEN: <eos>
+    PAD_TOKEN: <pad>
+    UNK_TOKEN: <unk>
+    S1_DIR: ../vivqa_s1_v2/data    # train/calib/dev/test.jsonl of ViVQA-S1 v2.0 (read-only)
+
+TRAINING:
+  SEED: 0
+  CHECKPOINT_PATH: saved_models
+  OUTPUT_PATH: output/viso
+  EPOCHS_SUP: 12                   # stage 1 (soft_ce / hard_ce), early stopping on dev NLL
+  PATIENCE: 5
+  EPOCHS_RL: 5                     # stage 2 (rlcd), only when LOSS.NAME == rlcd
+  LR_ENCODER: 0.00005              # the ViSO encoder layers (as the A2 / ABL_bami recipe)
+  LR_HEADS: 0.0005
+  LR_FT: 0.00001                   # the UNFROZEN tower parameters (top 4 blocks of SigLIP 2 vision + BamiBERT, MAP head)
+  WEIGHT_DECAY: 0.01
+  WARMUP_STEPS: 200
+  GRAD_CLIP: 1.0
+  VISION_PATH_AS_HEADS: True       # True: vision_embedding / vision_proj / vision_attr_reduce (+ box_proj, feature_norm, prod_v) use LR_HEADS
+  TEXT_PROJ_AS_HEADS: True         # True: the 768 -> 512 projection of cached BERT states uses LR_HEADS
+  ENCODER_AS_HEADS: False          # True: ONE learning rate (LR_HEADS) for every parameter (from-scratch models such as B-BUTD)
+  AMP: False                       # keep False (the -1e9 / -1e5 masks overflow in fp16)
+  RESUME: False                    # True: continue from last.pth / skip a finished run (DONE.json); the Kaggle runner sets it
+  DEADLINE_UNIX: 0.0               # >0: stop after an epoch (exit code 3, resumable) if the next epoch would pass this unix time
+  STOP_AFTER_EPOCHS: 0             # >0: simulated interruption after this many epochs of the session (tests)
+
+LOSS:
+  NAME: soft_ce                    # hard_ce | soft_ce | rlcd
+  STAGE: all                       # all | sup | rl  (rlcd: stage 1 soft_ce, then stage 2 rlcd from the best checkpoint)
+  TYPE_BALANCE: False
+  KD_WEIGHT: 0.0                   # a: loss = (1 - a) CE(human soft label) + a CE(teacher distribution) on items that have a teacher target (needs DATASET.FEATURE_DATASET.TEACHER_TRAIN)
+  TYPE_WEIGHTS: [1.0, 1.0, 1.0]    # per-type loss weights (noul, score, choice) applied to the per-item loss before the reduction; [1, 1, 1] = off
+  PG_WEIGHT: 1.0
+  PG_SIGMA_SCALE: False            # True: multiply the policy-gradient term by sigma (the PG gradient is ~ 1/sigma: this makes its scale independent of the annealed sigma)
+  NUM_SAMPLES: 4
+  SIGMA_START: 0.4
+  SIGMA_END: 0.1
+  SPHERICAL_WEIGHT: 0.75
+  RPS_WEIGHT: 1.0
+
+MODEL:
+  ARCHITECTURE: ViSOFT
+  NAME: viso_ft_bami
+  FT:
+    VISION_MODEL: google/siglip2-base-patch16-256
+    VISION_REVISION: 3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab
+    TEXT_MODEL: Qualcomm-AI-Research/BamiBERT
+    TEXT_REVISION: 57bc1340debbe4e348ec549047a763caebe4a977
+    TOP_BLOCKS: 4                  # transformer blocks unfrozen at the top of each tower
+    NORM: stats                    # stats = train-set mean / std as the INITIAL value of a learnable per-dimension affine | layernorm
+    AMP: bf16                      # autocast of the two towers (bf16 on the 3090); none = fp32 (CPU / the GTX 1650 Ti)
+    LORA_R: 0                      # > 0: LoRA adapters of this rank in both towers INSTEAD of unfreezing blocks (not run by default)
+  DEVICE: cuda
+  D_MODEL: 512
+  CONSTITUENT_LAYERS: 3
+  STRICT_TEXT_MASK: True           # correct padding masks in the constituent module (the published code reads the additive mask as a bool and never applies masked_fill: False reproduces it); ON for every SigLIP 2 run
+  FUSION_PRODUCT: True             # True: + Hadamard term prod_q(text) * prod_v(vision) in the fusion
+  FUSION_DROPOUT: 0.0              # dropout on the fused vector h (regularisation variant)
+  ATTR_REDUCE_INIT_STD: 0.0        # > 0: N(0, std) init of the last layer of the attention-pooling MLPs (non-uniform pooling at the start); 0 = default init
+
+  ZERO_VISION: False               # True: question-only ablation (A5)
+  SET_ATTENTION: True              # False: choice head without set attention (A6)
+  SHARE_EMBEDDING: True
+  SET_LAYERS: 2
+  SET_HEADS: 8
+  SET_FF: 1024
+  SET_DROPOUT: 0.1
+  HEAD_DROPOUT: 0.1
+  VISION_EMBEDDING:
+    ARCHITECTURE: FeatureEmbedding
+    D_FEATURE: 768
+    D_MODEL: 512
+    DROPOUT: 0.1
+    USE_BOXES: True
+    FEATURE_NORM: False            # True: LayerNorm over the 768 raw feature dims before the projection
+  TEXT_EMBEDDING:
+    ARCHITECTURE: CachedBertEmbedding   # Linear(768 -> 512) over the cached BamiBERT token states (no LSTM, no from-scratch word embeddings)
+    D_MODEL: 512
+    D_EMBEDDING: 768
+    DROPOUT: 0.1
+    WORD_EMBEDDING: null
+    WORD_EMBEDDING_CACHE: null
+  SELF_ENCODER:
+    ARCHITECTURE: Encoder
+    D_MODEL: 512
+    LAYERS: 3
+    SELF_ATTENTION:
+      ARCHITECTURE: ScaledDotProductAttention
+      HEAD: 8
+      D_MODEL: 512
+      D_KEY: 64
+      D_VALUE: 64
+      D_FF: 2048
+      D_FEATURE: 768
+      USE_AOA: False
+      CAN_BE_STATEFUL: False
+      DROPOUT: .1
+  GUIDED_ENCODER:
+    ARCHITECTURE: GuidedAttentionEncoder
+    D_MODEL: 512
+    LAYERS: 3
+    SELF_ATTENTION:
+      ARCHITECTURE: ScaledDotProductAttention
+      HEAD: 8
+      D_MODEL: 512
+      D_KEY: 64
+      D_VALUE: 64
+      D_FF: 2048
+      D_FEATURE: 768
+      USE_AOA: False
+      CAN_BE_STATEFUL: False
+      DROPOUT: .1
+    GUIDED_ATTENTION:
+      ARCHITECTURE: ScaledDotProductAttention
+      HEAD: 8
+      D_MODEL: 512
+      D_KEY: 64
+      D_VALUE: 64
+      D_FF: 2048
+      D_FEATURE: 768
+      USE_AOA: False
+      CAN_BE_STATEFUL: False
+      DROPOUT: .1
+  VISION_ATTR_REDUCE:
+    D_MODEL: 512
+    DROPOUT: 0.1
+  TEXT_ATTR_REDUCE:
+    D_MODEL: 512
+    DROPOUT: 0.1
