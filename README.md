@@ -7,7 +7,6 @@
 
 **ViVQA-S1** is an efficient **System-One ($O(1)$ single forward pass)** visual question answering framework and benchmark tailored for Vietnamese. Unlike standard Vision-Language Models (VLMs) that perform slow autoregressive decoding ($O(L)$ steps), ViVQA-S1 parametrizes VQA as a **typed decision task**—achieving high accuracy, low latency, and formal confidence calibration with selective fallback.
 
-Developed as part of the **IE307 Capstone Project**, University of Information Technology (UIT - VNUHCM).
 
 ---
 
@@ -177,19 +176,38 @@ python scripts/viso_report.py \
 
 ---
 
-## 📬 Contact & Citation
+## 🏆 Benchmark Results on ViVQA-S1 (Test Split)
 
-**Author**: Khai Tran ([@Narcolepsyy](https://github.com/Narcolepsyy))  
-**Email**: [23520680@gm.uit.edu.vn](mailto:23520680@gm.uit.edu.vn)  
-**Affiliation**: Department of Information Systems, University of Information Technology (UIT - VNUHCM)  
-**Advisor**: Phan Nguyet Duy ([duypn@uit.edu.vn](mailto:duypn@uit.edu.vn))  
+The table below presents the evaluation results on the **ViVQA-S1 Test Split** (4,409 items), comparing **External VLMs in System-One Mode** (evaluated with a standardized Vietnamese letter prompt and single-forward-pass letter-token logits), fine-tuned variants, and compact baselines.
 
-```bibtex
-@misc{tran2026vivqas1,
-  title={ViVQA-S1: System-One Typed Decision Architecture & Benchmarking for Vietnamese Visual Question Answering},
-  author={Khai Tran},
-  year={2026},
-  publisher={GitHub},
-  howpublished={\url{https://github.com/Narcolepsyy/vivqa-s1}}
-}
-```
+> **Evaluation Views**:  
+> - **All Acc**: Overall accuracy on the full test set.  
+> - **Core Acc**: Accuracy on clean, verified items.  
+> - **Image-Unseen Acc**: Strict out-of-distribution evaluation on images never appearing in train or calibration splits.  
+> - **Per-type breakdown**: `noul` (Boolean yes/no verification), `score` (Counting $0 \dots 10+$), `choice` (16-way candidate selection).
+
+| Model | Parameters | Paradigm / Method | All Acc | Core Acc | Image-Unseen | `noul` | `score` | `choice` | ECE | Latency |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **Qwen3.5-2B** | 2.27 B | LoRA + Head | **75.7%** | **75.9%** | **76.4%** | **81.1%** | **70.0%** | **72.9%** | 0.025 | 0.044s |
+| **Qwen3.5-0.8B** | 0.87 B | LoRA + Head | **72.1%** | **72.3%** | **72.8%** | **78.4%** | **65.5%** | **68.8%** | 0.038 | 0.025s |
+| *Qwen3-VL-8B* | 8.77 B | Zero-shot Ref | 69.5% | 69.8% | 70.3% | 82.5% | 69.3% | 59.4% | 0.031 | 0.122s |
+| *Intern-Decision-4B* | 4.54 B | Zero-shot Ref | 68.1% | 68.5% | 69.1% | 81.8% | 63.3% | 58.5% | 0.044 | 0.082s |
+| *Intern-Decision-2B* | 2.21 B | Zero-shot Ref | 64.9% | 65.3% | 65.8% | 77.6% | 57.2% | 56.9% | 0.025 | 0.047s |
+| **OneJev-0.8B** | 1.11 B | Head-only | 61.2% | 61.6% | 61.9% | 74.6% | 61.3% | 50.7% | 0.035 | 0.029s |
+| **jpt-0.8B** | 0.85 B | Head-only | 60.5% | 60.9% | 60.9% | 74.1% | 59.2% | 50.1% | 0.037 | 0.029s |
+| **Intern-Decision-0.8B** | 0.85 B | Head-only | 60.1% | 60.4% | 61.3% | 73.5% | 57.2% | 50.3% | 0.031 | 0.029s |
+| **Qwen3.5-0.8B** | 0.87 B | Head-only | 59.7% | 60.1% | 60.5% | 72.5% | 56.8% | 50.4% | 0.030 | 0.029s |
+| **OneJev-0.8B** | 1.11 B | Zero-shot | 60.2% | 60.5% | 60.8% | 74.4% | 54.7% | 50.4% | 0.037 | 0.029s |
+| **jpt-0.8B** | 0.85 B | Zero-shot | 58.5% | 58.9% | 58.8% | 72.1% | 52.1% | 49.4% | 0.038 | 0.029s |
+| **Intern-Decision-0.8B** | 0.85 B | Zero-shot | 57.9% | 58.3% | 58.9% | 72.5% | 49.9% | 48.5% | 0.030 | 0.029s |
+| **Vintern-1B-v3.5** | 0.94 B | Head-only | 57.1% | 57.3% | 57.9% | 69.7% | 51.3% | 48.6% | 0.051 | 0.070s |
+| **Qwen3.5-0.8B** | 0.87 B | Zero-shot | 56.0% | 56.4% | 57.1% | 70.5% | 41.9% | 48.0% | 0.030 | 0.029s |
+| **Vintern-1B-v3.5** | 0.94 B | Zero-shot | 53.3% | 53.5% | 53.8% | 69.1% | 48.0% | 42.3% | 0.046 | 0.070s |
+| *Qwen3.5-0.8B (Text-only)* | 0.87 B | Control (No Image) | 47.2% | 47.5% | 47.3% | 51.5% | 28.9% | 48.3% | 0.038 | 0.008s |
+| *B-MLP (Simple Floor)* | ~15 M | Question Bag x Image | 35.5% | 35.5% | 35.6% | 51.0% | 28.0% | 25.0% | - | <0.001s |
+
+### 📌 Benchmark Insights
+1. **LoRA Adaptation**: Parameter-efficient fine-tuning on Qwen3.5-0.8B yields a **+16.1%** accuracy jump over zero-shot (reaching **72.1%**), outperforming much larger zero-shot models (Qwen3-VL-8B at 69.5%). Qwen3.5-2B achieves the highest overall accuracy at **75.7%** (75.9% Core).
+2. **Inference Latency**: Evaluating option letter logits in a single forward pass takes only **~25–44 ms** per item, making it $10\times$ to $30\times$ faster than token-by-token autoregressive generation (~500–1200 ms).
+3. **Modality Contribution**: The text-only control (`lora-txt`: **47.2%** overall, **28.9%** on counting) demonstrates that visual reasoning contributes over **+24.9%** absolute accuracy, proving the benchmark cannot be solved by language prior shortcuts alone.
+
