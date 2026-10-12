@@ -197,6 +197,7 @@ The table below presents the evaluation results on the **ViVQA-S1 Test Split** (
 | *Qwen3-VL-8B (VLM)* | 8.77 B | Zero-shot Ref | 69.5% | 69.8% | 70.3% | 82.5% | 69.3% | 59.4% | 0.031 | 0.122s |
 | **ViSO Cascade (20% Cov)** | ~103 M + 0.8B | System-1 $\rightarrow$ System-2 | **69.0%** | **69.2%** | **69.8%** | 76.1% | 63.4% | 66.0% | 0.029 | ~0.021s |
 | *Intern-Decision-4B (VLM)* | 4.54 B | Zero-shot Ref | 68.1% | 68.5% | 69.1% | 81.8% | 63.3% | 58.5% | 0.044 | 0.082s |
+| *Decision API (Teacher)* | *Cloud API* | *Reference Teacher* | *68.1%* | *68.5%* | *69.2%* | *81.5%* | *62.2%* | *59.1%* | *0.105* | *~0.800s* |
 | *Intern-Decision-2B (VLM)* | 2.21 B | Zero-shot Ref | 64.9% | 65.3% | 65.8% | 77.6% | 57.2% | 56.9% | 0.025 | 0.047s |
 | **OneJev-0.8B (VLM)** | 1.11 B | Head-only | 61.2% | 61.6% | 61.9% | 74.6% | 61.3% | 50.7% | 0.035 | 0.029s |
 | **ViSO Cascade (50% Cov)** | ~103 M + 0.8B | System-1 $\rightarrow$ System-2 | **61.3%** | **61.3%** | **61.5%** | 70.2% | 55.4% | 57.8% | 0.030 | ~0.014s |
@@ -221,5 +222,6 @@ The table below presents the evaluation results on the **ViVQA-S1 Test Split** (
 2. **Selective Escalation (System-One $\rightarrow$ System-Two)**: By capitalizing on ViSO's sharp calibration (ECE $\approx 0.020$), the escalation head identifies confident answers locally and defers ambiguous cases to System-Two (Qwen3.5). At **10% ViSO coverage**, the cascade reaches **71.2% accuracy** (99% of full VLM performance) with significant latency reduction on confident queries. At **50% coverage**, accuracy reaches **61.3%** while requiring only **0.64x** of the VLM's compute budget.
 3. **Cross-Attention & Architectural Innovations**: Introducing token-level Candidate-to-Visual Cross-Attention and Vietnamese BaMI BERT features pushes pure System-One accuracy to **46.2%**, effectively mitigating visual feature pooling bottlenecks.
 4. **LoRA Fine-tuning**: For full generative models, parameter-efficient LoRA tuning on Qwen3.5-0.8B yields a +16.1% leap over zero-shot to **72.1%**, while Qwen3.5-2B achieves the ceiling at **75.7%**.
+5. **Reference Teacher & "Student Beats Teacher"**: The Decision API Teacher (used during dataset construction and distillation) achieves **68.1% accuracy** with an API latency of ~800 ms and higher calibration error (ECE 0.105). Both the fine-tuned on-device models (Qwen3.5-0.8B LoRA at 72.1%) and the ViSO Cascade (71.2% at 10% coverage) surpass the cloud teacher, demonstrating that task-specific structural alignment and post-hoc calibration yield superior results than relying on uncalibrated remote APIs.
 
 
