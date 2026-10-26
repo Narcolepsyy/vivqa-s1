@@ -39,8 +39,8 @@ def load_logits(path):
     return {k: z[k] for k in z.files}
 
 
-def probs_from_logits(logits, space_mask, type_id=None, temps=None):
-    """softmax(logits / T[type]) over the masked space. temps: None (T=1), a float, or {type_id: T}."""
+def probs_from_logits(logits, space_mask, type_id=None, temps=None, biases=None):
+    """softmax(logits / T[type] + b[type]) over the masked space. temps: None (T=1), a float, or {type_id: T}."""
     z = torch.as_tensor(logits, dtype=torch.float64)
     m = torch.as_tensor(space_mask)
     if temps is None:
@@ -49,7 +49,16 @@ def probs_from_logits(logits, space_mask, type_id=None, temps=None):
         t = torch.tensor([temps.get(int(k), 1.0) for k in type_id], dtype=torch.float64)[:, None]
     else:
         t = torch.full((z.shape[0], 1), float(temps), dtype=torch.float64)
-    p = torch.softmax((z / t).masked_fill(~m, NEG_INF), dim=-1)
+    scaled = z / t
+    if biases is not None and type_id is not None:
+        b_mat = np.zeros_like(z.numpy(), dtype=np.float64)
+        for k_id, b_vec in biases.items():
+            idx = np.nonzero(np.asarray(type_id) == int(k_id))[0]
+            if len(idx) and b_vec is not None:
+                b_arr = np.asarray(b_vec, dtype=np.float64)
+                b_mat[idx, :len(b_arr)] = b_arr
+        scaled = scaled + torch.as_tensor(b_mat, dtype=torch.float64)
+    p = torch.softmax(scaled.masked_fill(~m, NEG_INF), dim=-1)
     return (p * m).numpy()
 
 
@@ -98,6 +107,37 @@ def fit_temperatures(logits, space_mask, type_id, gold_idx=None, target=None):
     return out
 
 
+def fit_vector_calibration(logits, space_mask, type_id, gold_idx=None, target=None, l2=1e-2, max_iter=200):
+    """Fit per-type temperature T_t and fixed-space class-prior bias vector b_t (for noul K=2 and score K=11;
+    choice K=16 has b_2=0 since candidate order varies per item). Returns (temps_dict, biases_dict)."""
+    temps = fit_temperatures(logits, space_mask, type_id, gold_idx=gold_idx, target=target)
+    biases = {0: np.zeros(MAX_SPACE, dtype=np.float64), 1: np.zeros(MAX_SPACE, dtype=np.float64), 2: np.zeros(MAX_SPACE, dtype=np.float64)}
+    fixed_k = {0: 2, 1: 11}
+    for t, k_dim in fixed_k.items():
+        r = np.nonzero(type_id == t)[0]
+        if len(r) == 0:
+            continue
+        z_t = torch.as_tensor(logits[r, :k_dim] / temps[t], dtype=torch.float64)
+        b_param = torch.zeros(k_dim, dtype=torch.float64, requires_grad=True)
+        opt = torch.optim.LBFGS([b_param], lr=0.5, max_iter=max_iter, line_search_fn="strong_wolfe")
+        gi = None if gold_idx is None else torch.as_tensor(gold_idx[r], dtype=torch.long)
+        tg = None if target is None else torch.as_tensor(target[r, :k_dim], dtype=torch.float64)
+
+        def closure():
+            opt.zero_grad()
+            b_centered = b_param - b_param.mean()
+            logp = torch.log_softmax(z_t + b_centered[None, :], dim=-1)
+            nll = -logp.gather(1, gi[:, None]).mean() if gi is not None else -(tg * logp).sum(-1).mean()
+            loss = nll + l2 * (b_centered ** 2).sum()
+            loss.backward()
+            return loss
+
+        opt.step(closure)
+        b_val = (b_param.detach() - b_param.detach().mean()).numpy()
+        biases[t][:k_dim] = b_val
+    return temps, biases
+
+
 # --------------------------------------------------------------------------------------------- metrics
 def correct_fraction(probs, gold_idx, tol=1e-12):
     """1/|argmax set| if the gold is in it (ties credited fractionally, as in s1bench.metrics), else 0."""
@@ -113,15 +153,30 @@ def ece(conf, correct, bins=15):
 
 
 # --------------------------------------------------------------------------------------------- escalation
-def escalation_features(probs, space_mask, type_id):
-    """[max_prob, entropy/log|space|, top1-top2 margin, one-hot type(3), max_prob * one-hot type(3)] -> (N, 9)."""
+def escalation_features(probs, space_mask, type_id, include_interactions=False, member_probs=None):
+    """[max_prob, entropy/log|space|, top1-top2 margin, one-hot type(3), max_prob * one-hot type(3)] -> (N, 9) by default.
+    When include_interactions=True, appends oh * ent (3) and oh * margin (3).
+    When member_probs ([M, N, K]) is provided, appends ensemble disagreement features [std_top, vote_agree, oh * std_top(3)]."""
     p = np.where(space_mask, probs, 0.0)
     size = space_mask.sum(1)
     top2 = -np.sort(-p, axis=1)[:, :2]
     ent = -(np.where(p > 0, p * np.log(np.clip(p, 1e-12, None)), 0.0)).sum(1) / np.log(np.clip(size, 2, None))
     oh = np.eye(3)[type_id]
     mp = top2[:, 0]
-    return np.concatenate([mp[:, None], ent[:, None], (top2[:, 0] - top2[:, 1])[:, None], oh, oh * mp[:, None]], 1)
+    margin = top2[:, 0] - top2[:, 1]
+    feats = [mp[:, None], ent[:, None], margin[:, None], oh, oh * mp[:, None]]
+    if include_interactions:
+        feats.extend([oh * ent[:, None], oh * margin[:, None]])
+    if member_probs is not None:
+        mp_stack = np.asarray(member_probs, dtype=np.float64)  # [M, N, K]
+        top_idx = np.argmax(p, axis=1)
+        rows = np.arange(len(p))
+        member_top_p = mp_stack[:, rows, top_idx]              # [M, N]
+        std_top = member_top_p.std(axis=0)
+        member_argmax = np.argmax(mp_stack, axis=-1)           # [M, N]
+        vote_agree = (member_argmax == top_idx[None, :]).mean(axis=0)
+        feats.extend([std_top[:, None], vote_agree[:, None], oh * std_top[:, None]])
+    return np.concatenate(feats, 1)
 
 
 def fit_logreg(x, y, l2=1e-3, max_iter=200):

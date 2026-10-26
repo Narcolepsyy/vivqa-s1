@@ -24,7 +24,11 @@ class ViSO(nn.Module):
         self.encoder = self._make_encoder(config, vocab)
         drop = _cfg(config, "HEAD_DROPOUT", 0.1)
         self.noul_head = NoulHead(config.D_MODEL, drop)
-        self.score_head = ScoreHead(config.D_MODEL, drop)
+        self.score_head = ScoreHead(
+            config.D_MODEL, drop,
+            count_pool=_cfg(config, "SCORE_COUNT_POOL", False),
+            count_bins=_cfg(config, "SCORE_COUNT_BINS", 64),
+        )
         self.cached_text = self.encoder.cached_text
         if self.cached_text:                       # candidates come as cached pooled BamiBERT vectors (batch.cand_vecs), no embedding table
             emb, d_in = None, config.TEXT_EMBEDDING.D_EMBEDDING
@@ -40,7 +44,11 @@ class ViSO(nn.Module):
             cross_heads=_cfg(config, "CHOICE_CROSS_HEADS", 8),
             cross_dropout=_cfg(config, "CHOICE_CROSS_DROPOUT", 0.1))
 
-    def _make_encoder(self, config, vocab):                      # hook: the B-BUTD baseline (models/viso/butd.py) swaps the encoder and keeps the typed heads
+    def _make_encoder(self, config, vocab):                      # hook: the B-BUTD baseline (models/viso/butd.py) or MODEL.ENCODER_TYPE swaps the encoder and keeps the typed heads
+        enc_type = _cfg(config, "ENCODER_TYPE", "ViSO")
+        if enc_type != "ViSO":
+            from .vqa_baselines import build_s1_encoder
+            return build_s1_encoder(config, vocab, keep_classify=False)
         return ViSOEncoder(config, vocab)
 
     def forward(self, batch):
@@ -50,10 +58,14 @@ class ViSO(nn.Module):
         vision_mask = getattr(enc_out, "vision_mask", None)
         bs = h.shape[0]
         logits = torch.full((bs, MAX_SPACE), NEG_INF, dtype=h.dtype, device=h.device)
-        for type_id, head in ((0, self.noul_head), (1, self.score_head)):
-            rows = (batch.type_id == type_id).nonzero(as_tuple=True)[0]
-            if rows.numel():
-                logits[rows, :head.width] = head(h[rows]).to(logits.dtype)
+        rows = (batch.type_id == 0).nonzero(as_tuple=True)[0]
+        if rows.numel():
+            logits[rows, :self.noul_head.width] = self.noul_head(h[rows]).to(logits.dtype)
+        rows = (batch.type_id == 1).nonzero(as_tuple=True)[0]
+        if rows.numel():
+            vf = vision_features[rows] if vision_features is not None else None
+            vm = vision_mask[rows] if vision_mask is not None else None
+            logits[rows, :self.score_head.width] = self.score_head(h[rows], vf, vm).to(logits.dtype)
         rows = (batch.type_id == 2).nonzero(as_tuple=True)[0]
         if rows.numel():
             cv = batch.cand_vecs[rows] if self.cached_text else None
@@ -66,15 +78,22 @@ class ViSO(nn.Module):
 
 @META_ARCHITECTURE.register()
 class FlatS1(nn.Module):
-    """Baseline A0: ViCompreVQA as published (flat classifier over the answer vocabulary) on the same encoder
-    body as ViSO. `logits` are the flat logits RESTRICTED to the item's label space (noul: [<no>,<yes>], score:
+    """Baseline A0: flat classifier over the answer vocabulary on any System-One encoder body (`MODEL.ENCODER_TYPE`).
+    `logits` are the flat logits RESTRICTED to the item's label space (noul: [<no>,<yes>], score:
     #0..#10, choice: the candidate texts; a candidate absent from the flat vocab gets min(row logits) - 5), so
-    evaluation of A0 is always over the same space as ViSO."""
+    evaluation of FlatS1 is always over the same space as ViSO."""
 
     def __init__(self, config, vocab):
         super().__init__()
         self.d_model = config.D_MODEL
-        self.encoder = ViSOEncoder(config, vocab, keep_classify=True)
+        self.encoder = self._make_encoder(config, vocab)
+
+    def _make_encoder(self, config, vocab):
+        enc_type = _cfg(config, "ENCODER_TYPE", "ViSO")
+        if enc_type != "ViSO":
+            from .vqa_baselines import build_s1_encoder
+            return build_s1_encoder(config, vocab, keep_classify=True)
+        return ViSOEncoder(config, vocab, keep_classify=True)
 
     def restrict(self, flat_logits, batch):
         idx = batch.flat_index

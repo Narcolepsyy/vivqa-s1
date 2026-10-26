@@ -111,7 +111,7 @@ MODEL:
     D_MODEL: 512
     DROPOUT: 0.1
     USE_BOXES: True
-    FEATURE_NORM: False            # True: LayerNorm over the 768 raw feature dims before the projection
+    FEATURE_NORM: True             # True: LayerNorm over the 768 raw feature dims before the projection
   TEXT_EMBEDDING:
     ARCHITECTURE: CachedBertEmbedding   # Linear(768 -> 512) over the cached BamiBERT token states (no LSTM, no from-scratch word embeddings)
     D_MODEL: 512

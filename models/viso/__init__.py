@@ -4,3 +4,4 @@ from .heads import ChoiceHead, EscalationHead, NoulHead, ScoreHead, SetAttention
 from .viso_model import FlatS1, ViSO
 from .butd import BUTD, ButdEncoder
 from .viso_ft import ViSOFT, LiveEncoders
+from .vqa_baselines import ENCODER_REGISTRY, build_s1_encoder

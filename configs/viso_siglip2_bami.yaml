@@ -51,6 +51,7 @@ TRAINING:
   RESUME: False                    # True: continue from last.pth / skip a finished run (DONE.json); the Kaggle runner sets it
   DEADLINE_UNIX: 0.0               # >0: stop after an epoch (exit code 3, resumable) if the next epoch would pass this unix time
   STOP_AFTER_EPOCHS: 0             # >0: simulated interruption after this many epochs of the session (tests)
+  SAVE_BEST_PER_TYPE: False        # True: also save best_model_{noul,score,choice}.pth and splice per-type logits
 
 LOSS:
   NAME: soft_ce                    # hard_ce | soft_ce | rlcd
@@ -68,6 +69,7 @@ LOSS:
 
 MODEL:
   ARCHITECTURE: ViSO
+  ENCODER_TYPE: ViSO
   NAME: viso_s1
   DEVICE: cuda
   D_MODEL: 512
@@ -76,6 +78,7 @@ MODEL:
   FUSION_PRODUCT: False            # True: + Hadamard term prod_q(text) * prod_v(vision) in the fusion
   FUSION_DROPOUT: 0.0              # dropout on the fused vector h (regularisation variant)
   ATTR_REDUCE_INIT_STD: 0.0        # > 0: N(0, std) init of the last layer of the attention-pooling MLPs (non-uniform pooling at the start); 0 = default init
+  PRETRAINED_RESIDUAL: False       # True: skip connection around self/guided encoders preserving cached SigLIP-2 / BamiBERT features
 
   ZERO_VISION: False               # True: question-only ablation (A5)
   SET_ATTENTION: True              # False: choice head without set attention (A6)
@@ -85,6 +88,11 @@ MODEL:
   SET_FF: 1024
   SET_DROPOUT: 0.1
   HEAD_DROPOUT: 0.1
+  CHOICE_CROSS_ATTENTION: False
+  CHOICE_CROSS_HEADS: 8
+  CHOICE_CROSS_DROPOUT: 0.1
+  SCORE_COUNT_POOL: False
+  SCORE_COUNT_BINS: 64
   VISION_EMBEDDING:
     ARCHITECTURE: FeatureEmbedding
     D_FEATURE: 768

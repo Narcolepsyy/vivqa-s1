@@ -85,13 +85,14 @@ def input_shape(cfg_model):
 
 def profile(model, vocab, type_id=2, threads=(1, 4), warmup=20, runs=200, shape=None):
     n_reg, d_feat, use_boxes = shape or (N_REGIONS, 2048, False)
-    batch = make_batch(vocab, type_id, n_regions=n_reg, d_feature=d_feat, boxes=use_boxes)
+    cached_text = bool(getattr(model.encoder, "cached_text", False))
+    batch = make_batch(vocab, type_id, n_regions=n_reg, d_feature=d_feat, boxes=use_boxes, cached_text=cached_text)
     res = {"params": param_counts(model), "flops_batch1": forward_flops(model, batch), "type_id": type_id,
            "input": {"regions": n_reg, "feature_dim": d_feat, "boxes": use_boxes, "question_tokens": N_QTOKENS, "candidates": N_CAND},
            "cpu_latency": {f"{t}_threads": latency_ms(model, batch, t, warmup, runs) for t in threads},
            "note": "the vision extractor (VinVL, or the frozen SigLIP 2 tower) is NOT included: its cost is reported separately, once per image"}
     if torch.cuda.is_available():
-        m, b = model.to("cuda"), make_batch(vocab, type_id, device="cuda", n_regions=n_reg, d_feature=d_feat, boxes=use_boxes)
+        m, b = model.to("cuda"), make_batch(vocab, type_id, device="cuda", n_regions=n_reg, d_feature=d_feat, boxes=use_boxes, cached_text=cached_text)
         for _ in range(warmup):
             m(b)
         torch.cuda.synchronize()
@@ -108,6 +109,7 @@ def profile(model, vocab, type_id=2, threads=(1, 4), warmup=20, runs=200, shape=
 
 
 def main(argv=None):
+    import os
     import data_utils.vocabs.s1_vocab  # noqa: F401
     import models.viso  # noqa: F401
     from builders.model_builder import build_model
@@ -126,7 +128,8 @@ def main(argv=None):
         torch.manual_seed(0)
         vocab = build_vocab(cfg.DATASET.VOCAB)
         model = build_model(cfg.MODEL, vocab)
-        results[cfg.MODEL.ARCHITECTURE] = profile(model, vocab, warmup=args.warmup, runs=args.runs, shape=input_shape(cfg.MODEL))
+        key = cfg.MODEL.ARCHITECTURE if cfg.MODEL.ARCHITECTURE not in results else f"{cfg.MODEL.ARCHITECTURE}:{os.path.splitext(os.path.basename(cf))[0]}"
+        results[key] = profile(model, vocab, warmup=args.warmup, runs=args.runs, shape=input_shape(cfg.MODEL))
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=1)
     print(json.dumps(results, indent=1))

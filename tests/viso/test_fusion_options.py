@@ -104,8 +104,8 @@ def test_attr_reduce_init_std_is_off_by_default_and_makes_the_pooling_logits_var
     torch.manual_seed(0)
     wide = META_ARCHITECTURE.get("ViSO")(cfg.MODEL, vocab)
     for name in ("vision_attr_reduce", "text_attr_reduce"):
-        assert abs(float(getattr(wide.encoder, name).fc2.weight.std()) - 0.5) < 0.1
-        assert float(getattr(default.encoder, name).fc2.weight.std()) < 0.1
+        assert abs(float(getattr(wide.encoder, name).fc2.weight.detach().std()) - 0.5) < 0.1
+        assert float(getattr(default.encoder, name).fc2.weight.detach().std()) < 0.1
 
 
 def test_type_weights_are_off_by_default_and_scale_the_training_loss_per_type(caches, vocab):

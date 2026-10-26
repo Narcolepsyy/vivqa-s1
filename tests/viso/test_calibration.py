@@ -84,3 +84,95 @@ def test_auroc_and_selective_metrics_hand_cases():
 def test_correct_fraction_ties():
     p = np.array([[0.5, 0.5, 0.0], [0.2, 0.7, 0.1]])
     assert C.correct_fraction(p, np.array([1, 1])).tolist() == [0.5, 1.0]
+
+
+def test_vector_calibration_corrects_fixed_space_bias():
+    rng = np.random.RandomState(42)
+    n = 1000
+    z = np.zeros((n, 16), dtype=np.float64)
+    z[:, :2] = rng.randn(n, 2)
+    true_bias = np.array([-0.8, 0.8])
+    p_true = np.exp(z[:, :2] + true_bias)
+    p_true /= p_true.sum(1, keepdims=True)
+    y = np.array([rng.choice(2, p=row) for row in p_true])
+    mask = np.zeros((n, 16), dtype=bool)
+    mask[:, :2] = True
+    types = np.zeros(n, dtype=np.int64)
+    temps, biases = C.fit_vector_calibration(z, mask, types, gold_idx=y)
+    assert biases[0][1] - biases[0][0] > 0.5
+    p_vec = C.probs_from_logits(z, mask, types, temps, biases=biases)
+    p_scal = C.probs_from_logits(z, mask, types, temps)
+    acc_vec = (p_vec[:, :2].argmax(1) == y).mean()
+    acc_scal = (p_scal[:, :2].argmax(1) == y).mean()
+    assert acc_vec >= acc_scal
+
+
+def test_escalation_interactions_and_member_disagreement():
+    rng = np.random.RandomState(0)
+    n = 100
+    probs = np.zeros((n, 16))
+    probs[:, 0] = 0.7
+    probs[:, 1] = 0.3
+    mask = np.zeros((n, 16), bool)
+    mask[:, :2] = True
+    types = rng.randint(0, 3, n)
+    member_probs = np.stack([probs, probs[:, ::-1]], axis=0)
+    x_inter = C.escalation_features(probs, mask, types, include_interactions=True)
+    assert x_inter.shape == (n, 15)
+    x_mem = C.escalation_features(probs, mask, types, include_interactions=True, member_probs=member_probs)
+    assert x_mem.shape == (n, 20)
+
+
+def test_cascade_concave_envelope_and_dp_monotonicity():
+    import os
+    import sys
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "scripts")))
+    import viso_cascade as VC
+    rng = np.random.RandomState(7)
+    gains = []
+    for _ in range(3):
+        raw = np.concatenate([[0.0], np.cumsum(rng.choice([-1.0, 0.0, 1.0], size=50))])
+        env = VC.concave_envelope(raw)
+        inc = np.diff(env)
+        assert np.all(np.diff(inc) <= 1e-9)  # non-increasing marginal increments (concave)
+        gains.append(env)
+    plan = VC.dp_budget(gains, 150)
+    for k in range(150):
+        c_curr, c_next = plan[k], plan[k + 1]
+        assert all(c_next[t] >= c_curr[t] for t in range(3))
+
+
+def test_vivqa_s1_dataset_hf_dict_of_lists_and_letter_debiasing(tmp_path):
+    import json
+    import os
+    import sys
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
+    from vivqa_s1.dataset import ViVQAS1Dataset
+    row = {
+        "id": 1, "image": "000001.jpg", "coco_id": 1, "question": "Có mèo không?",
+        "question_type": "noul", "choices": ["không", "có"], "answer": "true",
+        "answer_distribution": {"key": ["false", "true"], "value": [0.2, 0.8]},
+        "gold_source": "human10", "split": "dev"
+    }
+    (tmp_path / "dev.jsonl").write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+    ds = ViVQAS1Dataset(split="dev", data_dir=tmp_path, load_image=False, use_parquet=False)
+    it = ds[0]
+    assert it["answer"] == "có" and it["answer_idx"] == 1
+    assert it["answer_distribution"] == {"không": pytest.approx(0.2), "có": pytest.approx(0.8)}
+
+
+def test_colab_residual_decision_head_starts_at_exact_zeroshot_parity():
+    import os
+    import sys
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "kaggle")))
+    import colab_heavy_boost as CHB
+    rng = np.random.RandomState(0)
+    W0 = torch.from_numpy(rng.randn(16, 32).astype(np.float32))
+    x = torch.from_numpy(rng.randn(8, 32).astype(np.float32))
+    lin_head = CHB.ResidualDecisionHead(W0, arch="linear")
+    res_head = CHB.ResidualDecisionHead(W0, arch="res_mlp", bottleneck=16)
+    with torch.no_grad():
+        assert torch.allclose(lin_head(x, train_mode=False), x @ W0.T, atol=1e-6)
+        assert torch.allclose(res_head(x, train_mode=False), x @ W0.T, atol=1e-6)
+
+

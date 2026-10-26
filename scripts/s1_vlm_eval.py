@@ -406,12 +406,32 @@ def load_shards(model_dir, split):
     return d
 
 
-def to_label_logits(item, letter_logits_by_order):
+def fit_letter_position_bias(calib_shards, calib_items):
+    """Estimate empirical letter-position bias b_pos[0..15] from paired Order-1 and Order-2 choice items on calib.
+    Because Order 2 reverses the candidate list of Order 1, 0.5 * (ll_1 + ll_2) cancels candidate content preference
+    and isolates positional letter bias before log_softmax."""
+    vecs = []
+    for it in calib_items:
+        if it["questions"]["q"]["type"] == "choice":
+            iid = it["id"]
+            if (iid, 1) in calib_shards and (iid, 2) in calib_shards:
+                ll1 = calib_shards[(iid, 1)][1].astype(np.float64)
+                ll2 = calib_shards[(iid, 2)][1].astype(np.float64)
+                vecs.append(0.5 * (ll1 + ll2))
+    if not vecs:
+        return np.zeros(MAX_SPACE, dtype=np.float64)
+    b = np.mean(vecs, axis=0)
+    return b - b.mean()
+
+
+def to_label_logits(item, letter_logits_by_order, letter_bias=None):
     """letter logits of 1-2 orders -> label-space log-probabilities [16] (average of the orders' log-softmax over the valid letters)"""
     n = len(label_space(item["questions"]["q"]))
     acc = np.zeros(MAX_SPACE, np.float64)
     for order, ll in letter_logits_by_order.items():
         z = ll[:n].astype(np.float64)
+        if letter_bias is not None and len(letter_logits_by_order) > 1:
+            z = z - np.asarray(letter_bias, dtype=np.float64)[:n]
         lp = z - (z.max() + np.log(np.exp(z - z.max()).sum()))
         for k, j in enumerate(order_perm(n, order)):
             acc[j] += lp[k]
@@ -432,13 +452,13 @@ def split_arrays(items, logits_fn):
     return np.asarray(ids), np.asarray(ty), np.asarray(mask), np.asarray(lg, np.float32)
 
 
-def zero_shot_logits(model_dir, items, split):
+def zero_shot_logits(model_dir, items, split, letter_bias=None):
     sh = load_shards(model_dir, split)
 
     def fn(it):
         got = {o: sh[(it["id"], o)][1] for o in (1, 2) if (it["id"], o) in sh}
         want = 2 if (split != "train" and it["questions"]["q"]["type"] == "choice") else 1
-        return to_label_logits(it, got) if len(got) == want else None
+        return to_label_logits(it, got, letter_bias=letter_bias) if len(got) == want else None
     return split_arrays(items, fn)
 
 
@@ -449,17 +469,23 @@ def evaluate_views(run_dir, s1_data, root):
     spec = importlib.util.spec_from_file_location("s1_evaluate", os.path.join(root, "evaluate.py"))
     EV = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(EV)
-    temps = json.load(open(os.path.join(run_dir, "calibration", "temperatures.json")))["per_type_nll"]
+    t_json = json.load(open(os.path.join(run_dir, "calibration", "temperatures.json")))
+    temps = t_json["per_type_nll"]
     t = {int(k): v for k, v in temps.items()}
+    t_soft = {int(k): v for k, v in t_json.get("per_type_soft", temps).items()}
+    b_vec = {int(k): np.asarray(v, dtype=np.float64) for k, v in t_json["per_type_bias"].items()} if "per_type_bias" in t_json else None
     from tasks.typed_decision_task import preds_dict
     res = {"temperatures": temps}
     flags = os.path.join(s1_data, "eval_flags.jsonl")
+    eval_modes = [("uncal", None, None), ("pertype", t, None), ("softtype", t_soft, None)]
+    if b_vec is not None:
+        eval_modes.append(("vectype", t, b_vec))
     for split in ("dev", "test"):
         lg = C.load_logits(os.path.join(run_dir, f"logits_{split}.npz"))
         by_id = {it["id"]: it for it in read_jsonl(os.path.join(s1_data, f"{split}.jsonl"))}
         items = [by_id[int(i)] for i in lg["ids"]]
-        for name, temps_ in (("uncal", None), ("pertype", t)):
-            probs = C.probs_from_logits(lg["logits"], lg["space_mask"], lg["type_id"], temps_)
+        for name, temps_, biases_ in eval_modes:
+            probs = C.probs_from_logits(lg["logits"], lg["space_mask"], lg["type_id"], temps_, biases=biases_)
             preds = preds_dict(items, probs)
             r = {"all": EV.evaluate(items, preds)}
             if split == "test" and os.path.isfile(flags):
@@ -482,7 +508,9 @@ def finish_run(run_dir, ids_arrays, s1_data, root):
 
 # ------------------------------------------------------------------------------------------------------------------- stage: zeroshot / head
 def stage_zeroshot(a):
-    arrays = {sp: zero_shot_logits(a.model_dir, load_items(a.s1_data, sp, a.limit), sp) for sp in ("calib", "dev", "test")}
+    calib_items = load_items(a.s1_data, "calib", a.limit)
+    letter_bias = fit_letter_position_bias(load_shards(a.model_dir, "calib"), calib_items) if getattr(a, "debias_letters", False) else None
+    arrays = {sp: zero_shot_logits(a.model_dir, load_items(a.s1_data, sp, a.limit), sp, letter_bias=letter_bias) for sp in ("calib", "dev", "test")}
     run = os.path.join(a.model_dir, "zeroshot")
     os.makedirs(run, exist_ok=True)
     res = finish_run(run, arrays, a.s1_data, a.root)
@@ -690,6 +718,7 @@ def main(argv=None):
     ap.add_argument("--wd", type=float, default=0.01)
     ap.add_argument("--dropout", type=float, default=0.1)
     ap.add_argument("--batch-head", type=int, default=256)
+    ap.add_argument("--debias-letters", action="store_true", help="zeroshot: subtract empirical calib letter-position bias before log-softmax")
     a = ap.parse_args(argv)
     faulthandler.enable()
     a.s1_data, a.root = (os.path.abspath(os.path.expanduser(p)) for p in (a.s1_data, a.root))

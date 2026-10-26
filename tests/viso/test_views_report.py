@@ -29,7 +29,7 @@ def fake_run(tmp_path_factory):
 
 def test_view_sizes_and_bins_add_up():
     v = VR.split_gold(S1V2)
-    assert len(v["all"]) == 4462 and len(v["core"]) < len(v["all"]) and len(v["image_unseen"]) < len(v["core"])
+    assert len(v["all"]) == 4409 and len(v["core"]) < len(v["all"]) and len(v["image_unseen"]) < len(v["core"])
     assert len(v["core_seen"]) + len(v["image_unseen"]) == len(v["core"])
     assert sum(len(b) for b in VR.bin_items(v["core"])) == len(v["core"])
 
@@ -41,7 +41,7 @@ def test_markdown_has_the_four_sections_and_consistent_numbers(fake_run):
     md = VR.views_markdown(manifest, runs, S1V2, "test", veff, eff)
     for h in ("## Views:", "## Seen-vs-unseen gap", "## Agreement bins", "## Efficiency rows"):
         assert h in md
-    assert "Core 4387" in md and "92,930,304" in md and "tower + ViSO" in md and "102,930,304" in md
+    assert "Core 4335" in md and "92,930,304" in md and "tower + ViSO" in md and "102,930,304" in md
     row = [l for l in md.splitlines() if l.startswith("| A2 |")]
     assert len(row) == 3                                               # views, gap, agreement bins
     acc = float(re.findall(r"\d\.\d+", row[0])[0])

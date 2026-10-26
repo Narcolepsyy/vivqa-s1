@@ -24,6 +24,9 @@ MODELS = {
     "intern": ("internlm/Intern-Decision-0.8B", "85a0cc5a99d67ea8d56dfe98115689212867171d", "apache-2.0"),
     "jpt": ("kirp/jpt-0.8b", "1431c0509bbc10772cd59964cc7af5835c8720d6", "CC-BY-NC-4.0 (non-commercial)"),
     "qwen": ("Qwen/Qwen3.5-0.8B", "2fc06364715b967f1860aea9cf38778875588b17", "apache-2.0"),
+    "minicpm": ("openbmb/MiniCPM-V-4.7-1B", "6fde9ecee3e59c4b0ce555a9c774e179d46d19cc", "apache-2.0"),
+    "d3-lite": ("vllm-sr/d3-lite", "99e5b1ce5a718454cd112cfe00caa8d2ae8df2ff", "apache-2.0"),
+    "d3-nano": ("vllm-sr/d3-nano", "80820624a8170104679aa99897a6e9026eae0790", "apache-2.0"),
     # reference tier (zero-shot only: calib / dev / test, no train features, no head); run on a rented 24 GB GPU (kaggle/ezy), fp16, no quantisation
     "ref-intern2b": ("internlm/Intern-Decision-2B", "8797836c65fc91a2435b1fb6850b5f0aabd75cc3", "apache-2.0"),
     "ref-intern4b": ("internlm/Intern-Decision-4B", "0e5e6aa7d6d750e2b1504ba11a8136cb58aeb3cd", "apache-2.0"),

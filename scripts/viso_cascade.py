@@ -107,6 +107,28 @@ def match_points(grid, acc, acc_s2, fracs=(0.95, 0.99)):
 TYPE_NAMES = ("noul", "score", "choice")
 
 
+def concave_envelope(cum_gains):
+    """Least concave majorant of cumulative gain curve cum_gains[0..n] via Pool Adjacent Violators Algorithm (PAVA)
+    on the marginal increments diff(cum_gains) (monotone non-increasing increments). Eliminates random-walk
+    spikes on dev and guarantees strictly monotonic per-type budget allocations k_t(K)."""
+    inc = np.diff(np.asarray(cum_gains, dtype=np.float64))
+    if len(inc) == 0:
+        return np.array([0.0], dtype=np.float64)
+    sums = inc.copy().tolist()
+    counts = [1] * len(inc)
+    i = 0
+    while i < len(sums) - 1:
+        if sums[i] / counts[i] < sums[i + 1] / counts[i + 1]:
+            sums[i] += sums.pop(i + 1)
+            counts[i] += counts.pop(i + 1)
+            if i > 0:
+                i -= 1
+        else:
+            i += 1
+    smooth_inc = np.repeat([s / c for s, c in zip(sums, counts)], counts)
+    return np.concatenate([[0.0], np.cumsum(smooth_inc)])
+
+
 def dp_budget(gains, n_total):
     """gains[t] = cumulative gain of answering the k most confident items of type t with System One (array of len n_t + 1). Returns, for every total budget K = 0..n_total, the best split (k_t) maximising the
     summed gain (exact dynamic programme over the three types)."""
@@ -158,7 +180,8 @@ def routing_curves(s1_dev, s2_dev, type_dev, s1_test, s2_test, type_test, masks,
     for t in range(3):
         idx = np.flatnonzero(type_dev == t)
         o = idx[np.lexsort((ids_dev[idx], -conf_dev[idx]))]
-        gains.append(np.concatenate([[0.0], np.cumsum(c1[o] - c2[o])]))
+        raw_g = np.concatenate([[0.0], np.cumsum(c1[o] - c2[o])])
+        gains.append(concave_envelope(raw_g))
         sorted_conf.append(conf_dev[o])
         n_t.append(len(idx))
     plan = dp_budget(gains, n_dev)
@@ -175,7 +198,7 @@ def routing_curves(s1_dev, s2_dev, type_dev, s1_test, s2_test, type_test, masks,
         rest = np.flatnonzero(type_dev != 0)
         o = rest[np.lexsort((ids_dev[rest], -conf_dev[rest]))]
         k = min(K, len(o))
-        tau2 = np.inf if k <= 0 else float(conf_dev[o][k - 1])
+        tau2 = np.inf if k <= 0 else (-np.inf if k >= len(o) else float(conf_dev[o][k - 1]))
         use2 = np.array([(type_test[i] != 0) and conf_test[i] >= tau2 for i in range(len(s1_test))])
         out["yes_no_to_system_two"].append(eval_use(use2, s1_test, s2_test, masks, pct, (0, None, None), n_t))
     return out

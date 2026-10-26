@@ -321,6 +321,8 @@ class TypedDecisionTask:
         total = epochs * steps_per_epoch
         scheduler = self._make_scheduler(total)
         best, best_epoch, bad, start_epoch = float("inf"), 0, 0, 1
+        save_per_type = bool(getattr(self.config.TRAINING, "SAVE_BEST_PER_TYPE", False)) and not self.flat
+        best_by_type = {t: float("inf") for t in ("noul", "score", "choice")}
         if resume_state is not None:                  # continue inside this stage
             self.model.load_state_dict(resume_state["model"])
             self.optim.load_state_dict(resume_state["optim"])
@@ -343,6 +345,11 @@ class TypedDecisionTask:
                        **getattr(self, "last_train_by_type", {}),
                        **{f"dev_acc_{t}": round(ev["primary"][t]["accuracy"], 6) for t in ("noul", "score", "choice") if t in ev["primary"]})
             self._log(**row)
+            if save_per_type:
+                for t in ("noul", "score", "choice"):
+                    if t in ev["primary"] and ev["primary"][t]["nll"] < best_by_type[t]:
+                        best_by_type[t] = ev["primary"][t]["nll"]
+                        self.save_checkpoint(f"best_model_{t}.pth", epoch=epoch, stage=stage, dev_nll=best_by_type[t])
             if p["nll"] < best:
                 best, best_epoch, bad = p["nll"], epoch, 0
                 self.save_checkpoint(best_name, epoch=epoch, stage=stage, dev_nll=p["nll"])
@@ -425,8 +432,18 @@ class TypedDecisionTask:
 
     def get_predictions(self):
         """Dump temperature-free logits of the selected model for calib / dev / test (npz) -> output dir."""
+        save_per_type = bool(getattr(self.config.TRAINING, "SAVE_BEST_PER_TYPE", False)) and not self.flat
+        ew = int(getattr(self.config.DATASET.FEATURE_DATASET, "EVAL_WORKERS", 0))
         self.load_checkpoint("best_model.pth")
-        for split in ("calib", "dev", "test"):
-            lg = collect_logits(self.model, self.datasets[split], self.batch_size, self.device, int(getattr(self.config.DATASET.FEATURE_DATASET, "EVAL_WORKERS", 0)))
+        base_lg = {sp: collect_logits(self.model, self.datasets[sp], self.batch_size, self.device, ew) for sp in ("calib", "dev", "test")}
+        if save_per_type:
+            for t_idx, t_name in enumerate(("noul", "score", "choice")):
+                if self.load_checkpoint(f"best_model_{t_name}.pth") is not None:
+                    for sp in ("calib", "dev", "test"):
+                        t_lg = collect_logits(self.model, self.datasets[sp], self.batch_size, self.device, ew)
+                        sel = base_lg[sp]["type_id"] == t_idx
+                        base_lg[sp]["logits"][sel] = t_lg["logits"][sel]
+            self.load_checkpoint("best_model.pth")
+        for split, lg in base_lg.items():
             calib.save_logits(os.path.join(self.output_path, f"logits_{split}.npz"), **lg)
         logger.info("logits written to %s", self.output_path)

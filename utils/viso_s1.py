@@ -10,7 +10,18 @@ S1_ROOT = os.environ.get("VIVQA_S1_ROOT") or os.path.abspath(os.path.join(REPO_R
 if S1_ROOT not in sys.path:
     sys.path.append(S1_ROOT)
 
-from s1bench.schema import label_space  # noqa: E402  (after the sys.path tweak)
+try:
+    from s1bench.schema import label_space  # noqa: E402  (after the sys.path tweak)
+except ImportError:
+    def label_space(q):
+        t = q["type"]
+        if t == "noul":
+            return ["false", "true"]
+        if t == "score":
+            return list(q.get("levels", [str(i) for i in range(11)]))
+        if t == "choice":
+            return list(q["criteria"].keys()) if "criteria" in q else list(q["choices"])
+        raise ValueError(f"Unknown question type: {t}")
 
 TYPE_IDS = {"noul": 0, "score": 1, "choice": 2}
 TYPE_NAMES = {v: k for k, v in TYPE_IDS.items()}

@@ -54,6 +54,7 @@ class ViSOEncoder(ConstituentMCAN):
         self.use_boxes = bool(getattr(config.VISION_EMBEDDING, "USE_BOXES", False))
         if self.use_boxes:
             self.box_proj = torch.nn.Linear(4, config.VISION_EMBEDDING.D_MODEL)
+        self.pretrained_residual = bool(getattr(config, "PRETRAINED_RESIDUAL", False))
 
     def forward(self, batch):
         regions, region_mask = batch.region_features, batch.region_mask          # (B,R,2048), (B,R) bool
@@ -67,12 +68,14 @@ class ViSOEncoder(ConstituentMCAN):
             boxes = batch.region_boxes
             projected = projected + self.box_proj(torch.zeros_like(boxes) if self.zero_vision else boxes)
         vision_features = ve.dropout(ve.gelu(projected))                         # == FeatureEmbedding minus its mask
+        vision_init = vision_features
         vision_padding_mask = (~region_mask).float().mul(MASK_FILL)[:, None, None, :]   # (B,1,1,R) additive
 
         if self.cached_text:                                                     # frozen BamiBERT token states instead of the from-scratch word embedding + LSTM
             text_features, (text_padding_mask, _) = self.text_embedding(batch.question_states, batch.question_state_mask)
         else:
             text_features, (text_padding_mask, _) = self.text_embedding(batch.question_tokens)
+        text_init = text_features
         mask = text_padding_mask
         if mask is not None and mask.dim() in (3, 4):
             mask = mask.view(mask.size(0), mask.size(-1))
@@ -81,9 +84,13 @@ class ViSOEncoder(ConstituentMCAN):
         text_features, break_probs = self.constituent_encoder(text_features, mask)
 
         text_features = self.self_encoder(features=text_features, padding_mask=text_padding_mask)
+        if self.pretrained_residual:
+            text_features = text_features + text_init
         vision_features = self.guided_encoder(
             vision_features=vision_features, vision_padding_mask=vision_padding_mask,
             language_features=text_features, language_padding_mask=text_padding_mask)
+        if self.pretrained_residual:
+            vision_features = vision_features + vision_init
 
         v_logits = self.vision_attr_reduce(vision_features) + vision_padding_mask[:, 0, 0, :, None]   # mask the pooling
         attended_vision = F.softmax(v_logits, dim=1)

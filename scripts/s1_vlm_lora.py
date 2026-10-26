@@ -157,13 +157,16 @@ def main(argv=None):
     ap.add_argument("--watchdog-sec", type=float, default=900.0)
     ap.add_argument("--resume", action="store_true", help="continue from <model-dir>/resume/state.pt (written at every dev evaluation: adapter, head, optimizer, scheduler, step, best state, history) if it exists and was made with the same settings")
     ap.add_argument("--stop-after-step", type=int, default=0, help="testing: exit (rc 0) right after the checkpoint written at this optimizer step")
+    ap.add_argument("--save-zeroshot", action="store_true", help="also evaluate and save <model-dir>/zeroshot/ at step 0 before LoRA updates")
+    ap.add_argument("--zeroshot-debias", action="store_true", help="with --save-zeroshot: also save <model-dir>/zeroshot_debiased/ (calib-mean letter-position bias subtracted before the log-softmax, as scripts/s1_vlm_eval.py --debias-letters) and the raw letter logits (zeroshot_letters_<split>.npz)")
+    ap.add_argument("--zeroshot-only", action="store_true", help="exit right after the zero-shot evaluation(s) (no dev eval, no training)")
     a = ap.parse_args(argv)
     a.s1_data, a.root = (os.path.abspath(os.path.expanduser(p)) for p in (a.s1_data, a.root))
     a.image_roots = [os.path.abspath(os.path.expanduser(p)) for p in a.image_roots]
     import faulthandler
     faulthandler.enable()
     from peft import LoraConfig, get_peft_model
-    from transformers import AutoModelForImageTextToText, AutoProcessor
+    from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor
     V.require_fast_fla(a.device)
     use_image = a.mode == "img"
     out = a.model_dir
@@ -174,18 +177,38 @@ def main(argv=None):
     dtype = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}[a.dtype]
     t_begin = time.time()
 
-    model = AutoModelForImageTextToText.from_pretrained(a.model, revision=a.revision, dtype=dtype, trust_remote_code=False).to(a.device)
+    hf_cfg = AutoConfig.from_pretrained(a.model, revision=a.revision, trust_remote_code=False)
+    is_d3 = getattr(hf_cfg, "architectures", None) == ["Qwen3_5Model"]
+    if is_d3:
+        from huggingface_hub import hf_hub_download
+        from safetensors.torch import load_file
+        from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5Model
+        model = Qwen3_5Model.from_pretrained(a.model, revision=a.revision, dtype=dtype, attn_implementation="sdpa", trust_remote_code=False).to(a.device)
+        dcfg = json.load(open(hf_hub_download(a.model, "decision_config.json", revision=a.revision)))
+        use_noncausal = dcfg.get("attention_mode") == "noncausal_full_attention"
+    else:
+        model = AutoModelForImageTextToText.from_pretrained(a.model, revision=a.revision, dtype=dtype, trust_remote_code=False).to(a.device)
+        use_noncausal = False
     proc = AutoProcessor.from_pretrained(a.model, revision=a.revision)
     proc.tokenizer.padding_side = "left"
     if use_image and a.max_pixels:
-        proc.image_processor.size = {"shortest_edge": a.min_pixels, "longest_edge": a.max_pixels}
+        try:
+            proc.image_processor.size = {"shortest_edge": a.min_pixels, "longest_edge": a.max_pixels}
+        except Exception as e:
+            print("could not set max_pixels:", e)
     letter_ids = []
     for L in V.LETTERS:
         ids = proc.tokenizer.encode(L, add_special_tokens=False)
         assert len(ids) == 1, (L, ids)
         letter_ids.append(ids[0])
-    W0 = model.get_output_embeddings().weight[letter_ids].detach().float().clone()
-    n_params = sum(p.numel() for p in model.parameters())
+    if is_d3:
+        ro_w = load_file(hf_hub_download(a.model, "readout.safetensors", revision=a.revision))["weight"]
+        assert dcfg["token_ids"][:len(letter_ids)] == letter_ids, (dcfg["token_ids"][:len(letter_ids)], letter_ids)
+        W0 = ro_w[:len(letter_ids)].detach().float().clone()
+        n_params = sum(p.numel() for p in model.parameters()) + ro_w.numel()
+    else:
+        W0 = model.get_output_embeddings().weight[letter_ids].detach().float().clone()
+        n_params = sum(p.numel() for p in model.parameters())
     for p in model.parameters():
         p.requires_grad_(False)                                                      # vision tower and everything else frozen; PEFT unfreezes only the adapters
     cfg = LoraConfig(r=a.rank, lora_alpha=a.alpha, lora_dropout=0.0, bias="none", target_modules=LORA_TARGETS)
@@ -196,11 +219,11 @@ def main(argv=None):
         inner.enable_input_require_grads()
     lora_params = [(n, p) for n, p in pm.named_parameters() if p.requires_grad]
     assert lora_params and all("lora_" in n for n, _ in lora_params), "only LoRA adapters may be trainable"
-    assert all("visual" not in n for n, _ in lora_params), "the vision tower must stay frozen"
+    assert all("visual" not in n and "vision_tower" not in n for n, _ in lora_params), "the vision tower must stay frozen"
     n_lora = sum(p.numel() for _, p in lora_params)
     W = torch.nn.Parameter(W0.to(a.device))
     b = torch.nn.Parameter(torch.zeros(MAX_SPACE, device=a.device))
-    print(f"model {a.model}@{a.revision[:8]}: {n_params / 1e9:.3f} B parameters, LoRA {n_lora / 1e6:.2f} M trainable ({len(lora_params)} tensors) + head {W.numel() / 1e3:.1f} k; mode {a.mode}; dtype {a.dtype}", flush=True)
+    print(f"model {a.model}@{a.revision[:8]}: {n_params / 1e9:.3f} B parameters, LoRA {n_lora / 1e6:.2f} M trainable ({len(lora_params)} tensors) + head {W.numel() / 1e3:.1f} k; mode {a.mode}; dtype {a.dtype}; noncausal={use_noncausal}", flush=True)
     fl, verdict = V.fast_path_report()
     print(f"versions: torch {torch.__version__}, transformers {__import__('transformers').__version__}, peft {__import__('peft').__version__}, " + ", ".join(fl), flush=True)
     print(f"linear-attention path: {verdict}", flush=True)
@@ -230,7 +253,7 @@ def main(argv=None):
             "train": {"lr_lora": a.lr_lora, "lr_head": a.lr_head, "wd": a.wd, "warmup": a.warmup, "batch": a.batch, "accum": a.accum, "epochs": a.epochs, "seed": a.seed, "max_len": a.max_len,
                       "permute": "all item types" if a.permute_all else "choice items only"},
             "prompt": "shared Vietnamese letter prompt (scripts/s1_vlm_eval.py PROMPT)" + ("" if use_image else "; NO IMAGE in the input (text-only control, prompt text unchanged)"),
-            "note": "training and evaluation in " + a.dtype + " (the zero-shot / head-only rows are fp16)", "seconds_per_unit": None}
+            "note": "training and evaluation in " + a.dtype + (" (d3 readout.safetensors[:16] + noncausal_full_attention)" if is_d3 else " (the zero-shot / head-only rows are fp16)"), "seconds_per_unit": None}
     atomic_json(os.path.join(out, "meta.json"), meta)
 
     def collate_train(rows):
@@ -247,10 +270,64 @@ def main(argv=None):
     def collate_eval(rows):
         return [r[0] for r in rows], [r[1] for r in rows], make_inputs(proc, [r[2] for r in rows], [r[3] for r in rows], use_image)
 
+    backbone = getattr(inner, "model", inner)
+    if use_noncausal:
+        from transformers.masking_utils import create_recurrent_attention_mask
+
+        def encode_hidden(inp):
+            ids, present = inp["input_ids"], inp["attention_mask"]
+            embeds = backbone.get_input_embeddings()(ids)
+            if use_image and "pixel_values" in inp:
+                pooled = backbone.get_image_features(inp["pixel_values"], inp["image_grid_thw"], return_dict=True).pooler_output
+                if isinstance(pooled, (tuple, list)):
+                    pooled = torch.cat(pooled, dim=0)
+                pooled = pooled.to(embeds.device, embeds.dtype)
+                slots, _ = backbone.get_placeholder_mask(ids, inputs_embeds=embeds, image_features=pooled)
+                embeds = embeds.masked_scatter(slots, pooled)
+                mrope = backbone.compute_3d_position_ids(
+                    input_ids=ids,
+                    image_grid_thw=inp["image_grid_thw"],
+                    video_grid_thw=None,
+                    inputs_embeds=embeds,
+                    attention_mask=present,
+                    past_key_values=None,
+                    mm_token_type_ids=inp.get("mm_token_type_ids"),
+                )
+                text_positions = None
+            else:
+                rows, width = present.shape
+                ramp = torch.arange(width, device=embeds.device).view(1, 1, -1).expand(4, rows, -1)
+                text_positions, mrope = ramp[0], ramp[1:]
+            lm = backbone.language_model
+            rope = lm.rotary_emb(embeds, mrope)
+            keys = present.bool()[:, None, None, :]
+            scan = create_recurrent_attention_mask(
+                config=lm.config,
+                inputs_embeds=embeds,
+                attention_mask=present,
+                past_key_values=None,
+                position_ids=text_positions,
+            )
+            hidden = embeds
+            depth = lm.config.num_hidden_layers
+            for layer, kind in zip(lm.layers[:depth], lm.config.layer_types[:depth]):
+                hidden = layer(
+                    hidden,
+                    position_embeddings=rope,
+                    attention_mask=keys if kind == "full_attention" else scan,
+                    position_ids=text_positions,
+                    past_key_values=None,
+                    use_cache=False,
+                )
+            return lm.norm(hidden)[:, -1]
+    else:
+        def encode_hidden(inp):
+            return backbone(**inp).last_hidden_state[:, -1]
+
     def letter_logits(inp):
         inp = {k: v.to(a.device) for k, v in inp.items()}
         with torch.autocast("cuda", dtype=dtype, enabled=(dtype != torch.float32 and a.device == "cuda")):
-            h = inner.model(**inp).last_hidden_state[:, -1]
+            h = encode_hidden(inp)
         return h.float() @ W.T + b
 
     mon = V.Monitor(period=60.0, stall=a.watchdog_sec)
@@ -342,6 +419,38 @@ def main(argv=None):
     mon.start()
     print(f"{n_train} train items, {total_steps} optimizer steps, dev eval every {eval_every} steps on {len(dev_sub)} dev items ({len(dev_units)} units)", flush=True)
     if not resumed:
+        if a.save_zeroshot and not os.path.isfile(os.path.join(out, "zeroshot", "views.json")):
+            zs_run = os.path.join(out, "zeroshot")
+            os.makedirs(zs_run, exist_ok=True)
+            zs_arrays = {}
+            zs_ll, zs_items = {}, {}
+            for sp in ("calib", "dev", "test"):
+                items = items_of(sp)
+                units = V.make_units(items, sp)
+                ll = predict(items, units)
+                zs_ll[sp], zs_items[sp] = ll, items
+                zs_arrays[sp] = V.split_arrays(items, lambda it, ll=ll: V.to_label_logits(it, {o: ll[(it["id"], o)] for o in ((1, 2) if it["questions"]["q"]["type"] == "choice" else (1,))}))
+                print(f"[{time.strftime('%H:%M:%S')}] zeroshot predicted {sp}: {len(units)} units", flush=True)
+            if a.zeroshot_debias:
+                for sp, ll in zs_ll.items():
+                    ks = sorted(ll)
+                    np.savez(os.path.join(out, f"zeroshot_letters_{sp}.npz"), ids=np.array([k[0] for k in ks]), orders=np.array([k[1] for k in ks]), logits=np.stack([ll[k] for k in ks]))
+                bias = V.fit_letter_position_bias({k: (None, v) for k, v in zs_ll["calib"].items()}, zs_items["calib"])
+                np.save(os.path.join(out, "zeroshot_letter_bias.npy"), bias)
+                deb_arrays = {sp: V.split_arrays(zs_items[sp], lambda it, ll=zs_ll[sp]: V.to_label_logits(it, {o: ll[(it["id"], o)] for o in ((1, 2) if it["questions"]["q"]["type"] == "choice" else (1,))}, letter_bias=bias)) for sp in zs_ll}
+                deb_run = os.path.join(out, "zeroshot_debiased")
+                os.makedirs(deb_run, exist_ok=True)
+                deb_res = V.finish_run(deb_run, deb_arrays, a.s1_data, a.root)
+                print(f"[{time.strftime('%H:%M:%S')}] DEBIASED zero-shot ({a.mode}) test acc (per-type T) {deb_res['test']['pertype']['all']['primary']['all']['accuracy']:.4f}", flush=True)
+            zs_res = V.finish_run(zs_run, zs_arrays, a.s1_data, a.root)
+            zs_acc = zs_res["test"]["pertype"]["all"]["primary"]["all"]["accuracy"]
+            print(f"[{time.strftime('%H:%M:%S')}] zero-shot ({a.mode}) test acc (per-type T) {zs_acc:.4f}", flush=True)
+            for vw in ("all", "core", "image_unseen"):
+                p = zs_res["test"]["pertype"][vw]["primary"]
+                print(f"[{time.strftime('%H:%M:%S')}] ZEROSHOT TEST {vw}: acc={p['all']['accuracy']:.4f} nll={p['all']['nll']:.4f} ece={p['all']['ece']:.4f} | noul={p['noul']['accuracy']:.4f} score={p['score']['accuracy']:.4f} choice={p['choice']['accuracy']:.4f}", flush=True)
+        if a.zeroshot_only:
+            print("zeroshot-only: done", flush=True)
+            os._exit(0)
         do_eval(0, 0.0, None)                                                         # step 0 = zero-shot-initialised head with untrained (zero-delta) LoRA
     pm.train()
 
