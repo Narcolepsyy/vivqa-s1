@@ -47,6 +47,8 @@ def param_counts(model):
             out[name] = sum(p.numel() for p in getattr(model, name).parameters())
     if hasattr(model.encoder, "classify"):
         out["flat_classifier"] = sum(p.numel() for p in model.encoder.classify.parameters())
+    if getattr(model.encoder, "text_vision_grounding", False):
+        out["text_vision_grounding"] = sum(p.numel() for p in model.encoder.tv_ground.parameters())
     out["checkpoint_mb_fp32"] = round(total * 4 / 2 ** 20, 2)
     out["checkpoint_mb_fp16"] = round(total * 2 / 2 ** 20, 2)
     return out

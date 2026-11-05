@@ -1,3 +1,5 @@
+import math
+
 import torch
 from torch.nn import functional as F
 
@@ -18,6 +20,70 @@ class EncoderOutput(tuple):
         return instance
 
 
+class TextVisionGrounding(torch.nn.Module):
+    """One question-to-vision cross-attention residual, inserted before text pooling.
+
+    The guided encoder lets every visual token read the question. The question tokens themselves never read the
+    image, so the text vector added in the sum fusion is image-invariant. This block is the other direction:
+    question tokens query the question-conditioned visual tokens. No extra positional encoding is added; positions
+    already live in the two streams.
+
+    The scalar gate is initialized at 0. The residual is then exactly zero, and the fused vector matches a baseline
+    encoder with the same other weights, in eval and in train (the block has no dropout, so it does not consume
+    random state). Padded question positions keep their incoming features. Padded visual tokens are removed from
+    the softmax. A row with no real visual token gets a zero residual, because a softmax over an empty key set is
+    undefined. Gold labels are not an input.
+    """
+
+    def __init__(self, d_model: int, heads: int):
+        super().__init__()
+        if heads < 1 or d_model % heads != 0:
+            raise ValueError(f"self-attention heads must divide D_MODEL, got heads={heads} D_MODEL={d_model}")
+        self.heads = int(heads)
+        self.d_head = d_model // self.heads
+        self.q_proj = torch.nn.Linear(d_model, d_model)
+        self.k_proj = torch.nn.Linear(d_model, d_model)
+        self.v_proj = torch.nn.Linear(d_model, d_model)
+        self.out_proj = torch.nn.Linear(d_model, d_model)
+        self.norm = torch.nn.LayerNorm(d_model)
+        self.gate = torch.nn.Parameter(torch.zeros(()))
+
+    def forward(self, text, vision, text_pad, vision_pad):
+        # text (B, L, D), vision (B, R, D); text_pad / vision_pad bool, True = ignore
+        if text.size(1) == 0 or vision.size(1) == 0:
+            return text
+        batch, length, dim = text.shape
+        n_reg = vision.size(1)
+        heads, d_head = self.heads, self.d_head
+        query = self.q_proj(text).view(batch, length, heads, d_head).transpose(1, 2)
+        key = self.k_proj(vision).view(batch, n_reg, heads, d_head).transpose(1, 2)
+        value = self.v_proj(vision).view(batch, n_reg, heads, d_head).transpose(1, 2)
+        scores = torch.matmul(query, key.transpose(-1, -2)) / math.sqrt(d_head)
+        scores = scores.masked_fill(vision_pad[:, None, None, :], MASK_FILL)
+        empty = vision_pad.all(dim=-1)
+        if bool(empty.any()):
+            scores = scores.masked_fill(empty[:, None, None, None], 0)
+        attn = torch.softmax(scores, dim=-1)
+        attn = attn.masked_fill(vision_pad[:, None, None, :], 0)
+        if bool(empty.any()):
+            attn = attn.masked_fill(empty[:, None, None, None], 0)
+        context = torch.matmul(attn, value).transpose(1, 2).contiguous().view(batch, length, dim)
+        residual = self.norm(self.out_proj(context))
+        residual = residual.masked_fill(text_pad.unsqueeze(-1), 0)
+        if bool(empty.any()):
+            residual = residual.masked_fill(empty[:, None, None], 0)
+        return text + torch.tanh(self.gate) * residual
+
+
+def require_text_vision_grounding(config, encoder):
+    """MODEL.TEXT_VISION_GROUNDING is a ViSOEncoder option. Other encoders must not ignore it silently."""
+    if bool(getattr(config, "TEXT_VISION_GROUNDING", False)) and not isinstance(encoder, ViSOEncoder):
+        raise ValueError(
+            "MODEL.TEXT_VISION_GROUNDING is implemented on ViSOEncoder only "
+            f"(this config built {type(encoder).__name__}). Set it false for other encoders."
+        )
+
+
 class ViSOEncoder(ConstituentMCAN):
     """ViCompreVQA's ConstituentMCAN encoder returning the 512-d fused vector instead of class scores.
 
@@ -28,6 +94,9 @@ class ViSOEncoder(ConstituentMCAN):
         zero", and the vision attention pooling is masked with it, so zero-padded regions cannot change the output
         (the original pools over padded rows too);
       * `MODEL.ZERO_VISION: true` feeds all-zero region features but keeps the explicit mask (question-only ablation).
+    Opt-in (`MODEL.TEXT_VISION_GROUNDING`, default false): after the guided encoder, question tokens cross-attend to
+    the visual tokens and a zero-init gate adds that residual before text pooling. Off, the module is not created and
+    the state dict matches the baseline encoder. See docs/viso_text_vision_grounding.md.
     Returns (h, break_probs); `classify` is deleted unless keep_classify=True (baseline A0 / FlatS1)."""
 
     def __init__(self, config, vocab, keep_classify: bool = False):
@@ -55,6 +124,13 @@ class ViSOEncoder(ConstituentMCAN):
         if self.use_boxes:
             self.box_proj = torch.nn.Linear(4, config.VISION_EMBEDDING.D_MODEL)
         self.pretrained_residual = bool(getattr(config, "PRETRAINED_RESIDUAL", False))
+        # TEXT_VISION_GROUNDING: question tokens query visual tokens before text pooling. The block is initialized
+        # under fork_rng so it does not change the initialization of any other parameter (the heads are built after
+        # the encoder). Off: the module is not created and a baseline checkpoint loads unchanged.
+        self.text_vision_grounding = bool(getattr(config, "TEXT_VISION_GROUNDING", False))
+        if self.text_vision_grounding:
+            with torch.random.fork_rng():
+                self.tv_ground = TextVisionGrounding(config.D_MODEL, int(config.SELF_ENCODER.SELF_ATTENTION.HEAD))
 
     def forward(self, batch):
         regions, region_mask = batch.region_features, batch.region_mask          # (B,R,2048), (B,R) bool
@@ -91,6 +167,13 @@ class ViSOEncoder(ConstituentMCAN):
             language_features=text_features, language_padding_mask=text_padding_mask)
         if self.pretrained_residual:
             vision_features = vision_features + vision_init
+        if self.text_vision_grounding:
+            text_pad = text_padding_mask.reshape(text_features.shape[0], -1) != 0
+            if text_pad.shape[1] != text_features.shape[1]:
+                raise RuntimeError(
+                    f"text padding mask length {text_pad.shape[1]} != text length {text_features.shape[1]}"
+                )
+            text_features = self.tv_ground(text_features, vision_features, text_pad, ~region_mask)
 
         v_logits = self.vision_attr_reduce(vision_features) + vision_padding_mask[:, 0, 0, :, None]   # mask the pooling
         attended_vision = F.softmax(v_logits, dim=1)

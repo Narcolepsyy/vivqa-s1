@@ -77,6 +77,7 @@ MODEL:
   STRICT_TEXT_MASK: True           # correct padding masks in the constituent module (the published code reads the additive mask as a bool and never applies masked_fill: False reproduces it); ON for every SigLIP 2 run
   FUSION_PRODUCT: False            # True: + Hadamard term prod_q(text) * prod_v(vision) in the fusion
   FUSION_DROPOUT: 0.0              # dropout on the fused vector h (regularisation variant)
+  TEXT_VISION_GROUNDING: False     # True: question tokens cross-attend to visual tokens before text pooling (docs/viso_text_vision_grounding.md). False: no extra parameters
   ATTR_REDUCE_INIT_STD: 0.0        # > 0: N(0, std) init of the last layer of the attention-pooling MLPs (non-uniform pooling at the start); 0 = default init
   PRETRAINED_RESIDUAL: False       # True: skip connection around self/guided encoders preserving cached SigLIP-2 / BamiBERT features
 

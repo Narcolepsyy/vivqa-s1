@@ -51,6 +51,7 @@ Checkpoints go to `saved_models/<MODEL.NAME>/` (`vocab.bin`, `best_model.pth`, `
 |---|---|
 | `MODEL.ARCHITECTURE` ViSO / FlatS1 | typed heads / A0 flat classifier (use the matching yaml) |
 | `MODEL.ZERO_VISION` | A5: all-zero region features, explicit mask kept (question-only ablation) |
+| `MODEL.TEXT_VISION_GROUNDING` | question tokens cross-attend to visual tokens before text pooling. Default false: no extra parameters, baseline checkpoints load. Mechanism, cost, and the one-flag ablation are in `docs/viso_text_vision_grounding.md` |
 | `MODEL.SET_ATTENTION` | A6: `False` removes the set-attention layers of the choice head |
 | `MODEL.SHARE_EMBEDDING` | candidate encoder shares the question word-embedding table |
 | `LOSS.NAME` hard_ce / soft_ce / rlcd, `LOSS.STAGE` all / sup / rl | objective; rlcd = stage 1 soft_ce then stage 2 rlcd |

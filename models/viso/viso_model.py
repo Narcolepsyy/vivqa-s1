@@ -4,7 +4,7 @@ from torch import nn
 from builders.model_builder import META_ARCHITECTURE
 from utils.viso_s1 import MAX_SPACE, NEG_INF
 
-from .encoder import ViSOEncoder
+from .encoder import ViSOEncoder, require_text_vision_grounding
 from .heads import ChoiceHead, NoulHead, ScoreHead
 
 
@@ -22,6 +22,7 @@ class ViSO(nn.Module):
         super().__init__()
         self.d_model = config.D_MODEL
         self.encoder = self._make_encoder(config, vocab)
+        require_text_vision_grounding(config, self.encoder)
         drop = _cfg(config, "HEAD_DROPOUT", 0.1)
         self.noul_head = NoulHead(config.D_MODEL, drop)
         self.score_head = ScoreHead(
@@ -87,6 +88,7 @@ class FlatS1(nn.Module):
         super().__init__()
         self.d_model = config.D_MODEL
         self.encoder = self._make_encoder(config, vocab)
+        require_text_vision_grounding(config, self.encoder)
 
     def _make_encoder(self, config, vocab):
         enc_type = _cfg(config, "ENCODER_TYPE", "ViSO")

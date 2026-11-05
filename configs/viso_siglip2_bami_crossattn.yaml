@@ -75,6 +75,7 @@ MODEL:
   STRICT_TEXT_MASK: True
   FUSION_PRODUCT: True
   FUSION_DROPOUT: 0.0
+  TEXT_VISION_GROUNDING: False     # True: question tokens cross-attend to visual tokens before text pooling (docs/viso_text_vision_grounding.md). False: no extra parameters
   ATTR_REDUCE_INIT_STD: 0.0
 
   ZERO_VISION: False
